@@ -4,11 +4,13 @@ const config = require('./config');
 const auth = require('./auth');
 const heartbeat = require('./heartbeat');
 const streams = require('./streams');
+const streamFrames = require('./streamFrames');
 const commands = require('./commands');
 
 let socket = null;
 let heartbeatTimer = null;
 let streamTimer = null;
+let streamFrameTimer = null;
 let reconnectTimer = null;
 let intentionalDisconnect = false;
 
@@ -56,13 +58,25 @@ function startIntervals() {
   clearIntervals();
   heartbeatTimer = setInterval(() => heartbeat.send(socket), config.heartbeatIntervalMs);
   streamTimer = setInterval(() => streams.pollAndReport(socket), config.streamPollIntervalMs);
+  streamFrameTimer = setInterval(async () => {
+    try {
+      const raw = await streams.fetchGo2rtcStreams();
+      const parsed = streams.parseStreamHealth(raw);
+      const names = parsed.streams.map((s) => s.name).filter(Boolean);
+      await streamFrames.uploadFramesForStreams(names);
+    } catch (err) {
+      console.warn('[agent] Stream frame poll failed:', err.message);
+    }
+  }, config.streamFrameIntervalMs);
 }
 
 function clearIntervals() {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   if (streamTimer) clearInterval(streamTimer);
+  if (streamFrameTimer) clearInterval(streamFrameTimer);
   heartbeatTimer = null;
   streamTimer = null;
+  streamFrameTimer = null;
 }
 
 function scheduleReconnect(reason) {

@@ -1,13 +1,22 @@
 const config = require('./config');
 const socket = require('./socket');
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 async function main() {
   if (!config.deviceId) {
-    console.error('DEVICE_ID is required');
+    console.error('DEVICE_ID is required (UUID from POST /api/devices — not a stream name)');
+    process.exit(1);
+  }
+  if (!UUID_REGEX.test(config.deviceId)) {
+    console.error(
+      `DEVICE_ID must be a UUID provisioned in the backend (got "${config.deviceId}").`,
+      'Create a RASPBERRY device via admin API/UI, then set DEVICE_ID to its id.'
+    );
     process.exit(1);
   }
   if (!config.deviceTokenSecret) {
-    console.error('DEVICE_TOKEN_SECRET is required');
+    console.error('DEVICE_TOKEN_SECRET is required (must match backend .env)');
     process.exit(1);
   }
 

@@ -11,7 +11,7 @@ async function runUpdate() {
   const steps = [
     `cd "${repoPath}" && git pull`,
     `cd "${repoPath}/agent" && npm install --production`,
-    'pm2 restart railwatch-agent',
+    `pm2 restart ${process.env.PM2_APP_NAME || 'railwatch-agent'}`,
   ];
 
   for (const cmd of steps) {

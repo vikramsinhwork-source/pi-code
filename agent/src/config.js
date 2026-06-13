@@ -14,6 +14,7 @@ module.exports = {
   agentVersion:  process.env.AGENT_VERSION || '1.0.0',
   heartbeatIntervalMs: Number(process.env.HEARTBEAT_INTERVAL_MS || 30000),
   streamPollIntervalMs: Number(process.env.STREAM_POLL_INTERVAL_MS || 30000),
+  streamFrameIntervalMs: Number(process.env.STREAM_FRAME_INTERVAL_MS || 10000),
   go2rtcUrl: (process.env.GO2RTC_URL || 'http://127.0.0.1:1984').replace(/\/$/, ''),
   go2rtcStreamsPath: process.env.GO2RTC_STREAMS_PATH || '/api/streams',
   reconnectDelayMs: Number(process.env.RECONNECT_DELAY_MS || 5000),
@@ -21,4 +22,5 @@ module.exports = {
   screenshotDir: process.env.SCREENSHOT_DIR || '/tmp/railwatch-screenshots',
   kioskDisplay: process.env.KIOSK_DISPLAY || ':0',
   repoPath: process.env.AGENT_REPO_PATH || require('path').join(__dirname, '..'),
+  pm2AppName: process.env.PM2_APP_NAME || 'railwatch-agent',
 };

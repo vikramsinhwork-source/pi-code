@@ -1,5 +1,6 @@
 const { exec } = require('child_process');
 const { promisify } = require('util');
+const config = require('./config');
 const screenshot = require('./screenshot');
 const updater = require('./updater');
 
@@ -43,7 +44,7 @@ function attach(socket) {
   socket.on('device:restart-agent', async (payload) => {
     console.log('[agent] Command: restart-agent', payload?.commandId);
     await runCommand(socket, payload, 'restart-agent', async () => {
-      await execAsync('pm2 restart railwatch-agent');
+      await execAsync(`pm2 restart ${config.pm2AppName}`);
     });
   });
 

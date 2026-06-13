@@ -1,6 +1,7 @@
 const axios = require('axios');
 const config = require('./config');
 const auth = require('./auth');
+const streamFrames = require('./streamFrames');
 
 function parseCodecsFromMedias(medias) {
   const codecs = [];
@@ -130,6 +131,9 @@ async function pollAndReport(socket) {
       payload,
       { headers: { Authorization: `Bearer ${token}` } }
     );
+
+    const streamNames = parsed.streams.map((s) => s.name).filter(Boolean);
+    await streamFrames.uploadFramesForStreams(streamNames);
   } catch (err) {
     console.warn('[agent] Stream poll failed:', err.message);
 
