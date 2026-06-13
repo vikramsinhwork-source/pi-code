@@ -14,8 +14,13 @@ module.exports = {
   agentVersion:  process.env.AGENT_VERSION || '1.0.0',
   heartbeatIntervalMs: Number(process.env.HEARTBEAT_INTERVAL_MS || 30000),
   streamPollIntervalMs: Number(process.env.STREAM_POLL_INTERVAL_MS || 30000),
-  streamFrameIntervalMs: Number(process.env.STREAM_FRAME_INTERVAL_MS || 2000),
+  // Legacy sequential-rotation pause (still used as fallback poll cadence).
+  streamFrameIntervalMs: Number(process.env.STREAM_FRAME_INTERVAL_MS || 200),
   streamFrameVncIntervalMs: Number(process.env.STREAM_FRAME_VNC_INTERVAL_MS || 15000),
+  // Persistent camera decoders: target fps per camera and how often the newest
+  // frame is uploaded to the backend.
+  cameraFps: Number(process.env.CAMERA_FPS || 3),
+  cameraUploadIntervalMs: Number(process.env.CAMERA_UPLOAD_INTERVAL_MS || 350),
   go2rtcUrl: (process.env.GO2RTC_URL || 'http://127.0.0.1:1984').replace(/\/$/, ''),
   go2rtcStreamsPath: process.env.GO2RTC_STREAMS_PATH || '/api/streams',
   reconnectDelayMs: Number(process.env.RECONNECT_DELAY_MS || 5000),

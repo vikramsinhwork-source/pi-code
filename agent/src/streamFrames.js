@@ -101,6 +101,10 @@ async function uploadOneStream({ name: streamName, source }) {
   await uploadFrame(streamName, buffer);
 }
 
+// Capture/upload strictly one stream at a time. Each go2rtc frame.jpeg spawns an
+// ffmpeg decode; running several HEVC decodes in parallel overloads the Pi. Doing
+// them sequentially keeps load low and is self-throttling (next frame starts only
+// after the previous upload completes).
 async function uploadFramesForStreams(streams = [], { vncOnly = false, rtspOnly = false } = {}) {
   if (!config.deviceId || !streams.length) return;
 
@@ -109,22 +113,7 @@ async function uploadFramesForStreams(streams = [], { vncOnly = false, rtspOnly 
   if (rtspOnly) list = list.filter((s) => !isVncSource(s.source));
   if (!list.length) return;
 
-  // RTSP/go2rtc captures are fast — run in parallel. VNC snapshots are slow — one at a time.
-  const vncStreams = list.filter((s) => isVncSource(s.source));
-  const rtspStreams = list.filter((s) => !isVncSource(s.source));
-
-  if (rtspStreams.length) {
-    await Promise.all(rtspStreams.map(async (stream) => {
-      try {
-        await uploadOneStream(stream);
-      } catch (err) {
-        console.warn(`[agent] Frame upload failed (${stream.name}):`, err.message);
-        if (err.response?.status === 401) auth.clearToken();
-      }
-    }));
-  }
-
-  for (const stream of vncStreams) {
+  for (const stream of list) {
     try {
       await uploadOneStream(stream);
     } catch (err) {
