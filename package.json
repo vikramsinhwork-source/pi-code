@@ -1,19 +1,13 @@
 {
   "name": "railwatch-agent",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Raspberry Pi monitoring agent for Railway Lobby Monitoring System",
+  "main": "agent/src/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node agent/src/index.js",
+    "start:legacy": "node index.js",
+    "test": "node --test agent/test/*.test.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "axios": "^1.17.0",
-    "dotenv": "^17.4.2",
-    "socket.io-client": "^4.8.3",
-    "uuid": "^14.0.0",
-    "ws": "^8.21.0"
-  }
+  "keywords": ["railway", "monitoring", "raspberry-pi"],
+  "license": "ISC"
 }
