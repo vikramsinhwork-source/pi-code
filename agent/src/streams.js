@@ -132,8 +132,7 @@ async function pollAndReport(socket) {
       { headers: { Authorization: `Bearer ${token}` } }
     );
 
-    const streamNames = parsed.streams.map((s) => s.name).filter(Boolean);
-    await streamFrames.uploadFramesForStreams(streamNames);
+    // Frame uploads are handled by socket.js timers (fast RTSP + slow VNC).
   } catch (err) {
     console.warn('[agent] Stream poll failed:', err.message);
 

@@ -10,6 +10,10 @@ const auth = require('./auth');
 
 const execFileAsync = promisify(execFile);
 
+function isVncSource(sourceUrl) {
+  return !!sourceUrl && /^vnc:\/\//i.test(sourceUrl);
+}
+
 function vncUrlToSnapshotTarget(vncUrl) {
   const match = String(vncUrl).match(/^vnc:\/\/([^:]+):(\d+)$/i);
   if (!match) return null;
@@ -55,7 +59,7 @@ async function captureGo2rtcFrame(streamName) {
 }
 
 async function captureFrame(streamName, sourceUrl) {
-  if (sourceUrl && /^vnc:\/\//i.test(sourceUrl)) {
+  if (isVncSource(sourceUrl)) {
     return captureVncFrame(sourceUrl);
   }
   return captureGo2rtcFrame(streamName);
@@ -92,18 +96,47 @@ function normalizeStreams(streams = []) {
   }).filter((entry) => entry.name);
 }
 
-async function uploadFramesForStreams(streams = []) {
+async function uploadOneStream({ name: streamName, source }) {
+  const buffer = await captureFrame(streamName, source);
+  await uploadFrame(streamName, buffer);
+}
+
+async function uploadFramesForStreams(streams = [], { vncOnly = false, rtspOnly = false } = {}) {
   if (!config.deviceId || !streams.length) return;
 
-  for (const { name: streamName, source } of normalizeStreams(streams)) {
+  let list = normalizeStreams(streams);
+  if (vncOnly) list = list.filter((s) => isVncSource(s.source));
+  if (rtspOnly) list = list.filter((s) => !isVncSource(s.source));
+  if (!list.length) return;
+
+  // RTSP/go2rtc captures are fast — run in parallel. VNC snapshots are slow — one at a time.
+  const vncStreams = list.filter((s) => isVncSource(s.source));
+  const rtspStreams = list.filter((s) => !isVncSource(s.source));
+
+  if (rtspStreams.length) {
+    await Promise.all(rtspStreams.map(async (stream) => {
+      try {
+        await uploadOneStream(stream);
+      } catch (err) {
+        console.warn(`[agent] Frame upload failed (${stream.name}):`, err.message);
+        if (err.response?.status === 401) auth.clearToken();
+      }
+    }));
+  }
+
+  for (const stream of vncStreams) {
     try {
-      const buffer = await captureFrame(streamName, source);
-      await uploadFrame(streamName, buffer);
+      await uploadOneStream(stream);
     } catch (err) {
-      console.warn(`[agent] Frame upload failed (${streamName}):`, err.message);
+      console.warn(`[agent] Frame upload failed (${stream.name}):`, err.message);
       if (err.response?.status === 401) auth.clearToken();
     }
   }
 }
 
-module.exports = { captureFrame, uploadFrame, uploadFramesForStreams };
+module.exports = {
+  captureFrame,
+  uploadFrame,
+  uploadFramesForStreams,
+  isVncSource,
+};

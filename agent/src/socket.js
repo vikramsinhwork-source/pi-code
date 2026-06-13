@@ -10,7 +10,8 @@ const commands = require('./commands');
 let socket = null;
 let heartbeatTimer = null;
 let streamTimer = null;
-let streamFrameTimer = null;
+let streamFrameFastTimer = null;
+let streamFrameSlowTimer = null;
 let reconnectTimer = null;
 let intentionalDisconnect = false;
 
@@ -58,24 +59,38 @@ function startIntervals() {
   clearIntervals();
   heartbeatTimer = setInterval(() => heartbeat.send(socket), config.heartbeatIntervalMs);
   streamTimer = setInterval(() => streams.pollAndReport(socket), config.streamPollIntervalMs);
-  streamFrameTimer = setInterval(async () => {
+  // Cameras/RTSP: frequent updates for near-live video (~2s).
+  streamFrameFastTimer = setInterval(async () => {
     try {
       const raw = await streams.fetchGo2rtcStreams();
       const parsed = streams.parseStreamHealth(raw);
-      await streamFrames.uploadFramesForStreams(parsed.streams);
+      await streamFrames.uploadFramesForStreams(parsed.streams, { rtspOnly: true });
     } catch (err) {
-      console.warn('[agent] Stream frame poll failed:', err.message);
+      console.warn('[agent] RTSP frame poll failed:', err.message);
     }
   }, config.streamFrameIntervalMs);
+
+  // Kiosk VNC: slower snapshots (vncsnapshot ~15–60s per screen).
+  streamFrameSlowTimer = setInterval(async () => {
+    try {
+      const raw = await streams.fetchGo2rtcStreams();
+      const parsed = streams.parseStreamHealth(raw);
+      await streamFrames.uploadFramesForStreams(parsed.streams, { vncOnly: true });
+    } catch (err) {
+      console.warn('[agent] VNC frame poll failed:', err.message);
+    }
+  }, config.streamFrameVncIntervalMs);
 }
 
 function clearIntervals() {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   if (streamTimer) clearInterval(streamTimer);
-  if (streamFrameTimer) clearInterval(streamFrameTimer);
+  if (streamFrameFastTimer) clearInterval(streamFrameFastTimer);
+  if (streamFrameSlowTimer) clearInterval(streamFrameSlowTimer);
   heartbeatTimer = null;
   streamTimer = null;
-  streamFrameTimer = null;
+  streamFrameFastTimer = null;
+  streamFrameSlowTimer = null;
 }
 
 function scheduleReconnect(reason) {
