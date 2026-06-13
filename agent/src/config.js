@@ -11,7 +11,7 @@ module.exports = {
   apiUrl: (process.env.API_URL || 'https://railwaymonitor.in').replace(/\/$/, ''),
   socketUrl: process.env.SOCKET_URL || process.env.API_URL || 'https://railwaymonitor.in',
   deviceTokenSecret: process.env.DEVICE_TOKEN_SECRET,
-  agentVersion: process.env.AGENT_VERSION || '1.0.0',
+  agentVersion:  process.env.AGENT_VERSION || '1.0.0',
   heartbeatIntervalMs: Number(process.env.HEARTBEAT_INTERVAL_MS || 30000),
   streamPollIntervalMs: Number(process.env.STREAM_POLL_INTERVAL_MS || 30000),
   go2rtcUrl: (process.env.GO2RTC_URL || 'http://127.0.0.1:1984').replace(/\/$/, ''),

@@ -30,6 +30,8 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('[agent] Fatal error:', err.message);
+  console.error('[agent] Fatal error:', err);
+  console.error(err?.response?.data);
+  console.error(err?.stack);
   process.exit(1);
 });
