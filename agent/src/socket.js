@@ -62,8 +62,7 @@ function startIntervals() {
     try {
       const raw = await streams.fetchGo2rtcStreams();
       const parsed = streams.parseStreamHealth(raw);
-      const names = parsed.streams.map((s) => s.name).filter(Boolean);
-      await streamFrames.uploadFramesForStreams(names);
+      await streamFrames.uploadFramesForStreams(parsed.streams);
     } catch (err) {
       console.warn('[agent] Stream frame poll failed:', err.message);
     }

@@ -1,9 +1,44 @@
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const fs = require('fs/promises');
+const os = require('os');
+const path = require('path');
 const axios = require('axios');
 const FormData = require('form-data');
 const config = require('./config');
 const auth = require('./auth');
 
-async function captureFrame(streamName) {
+const execFileAsync = promisify(execFile);
+
+function vncUrlToSnapshotTarget(vncUrl) {
+  const match = String(vncUrl).match(/^vnc:\/\/([^:]+):(\d+)$/i);
+  if (!match) return null;
+  const host = match[1];
+  const port = Number(match[2]);
+  const display = port >= 5900 ? port - 5900 : port;
+  return `${host}:${display}`;
+}
+
+async function captureVncFrame(vncUrl) {
+  const target = vncUrlToSnapshotTarget(vncUrl);
+  if (!target) throw new Error('Invalid VNC URL');
+
+  const tmpPath = path.join(os.tmpdir(), `railwatch-frame-${Date.now()}.jpg`);
+  await execFileAsync(
+    'vncsnapshot',
+    ['-quality', '80', '-allowblank', target, tmpPath],
+    { timeout: 60000 }
+  );
+
+  const buffer = await fs.readFile(tmpPath);
+  await fs.unlink(tmpPath).catch(() => {});
+
+  if (!buffer?.length) throw new Error('Empty frame');
+  if (buffer.length < 500) throw new Error(`Frame too small (${buffer.length} bytes)`);
+  return buffer;
+}
+
+async function captureGo2rtcFrame(streamName) {
   const url = `${config.go2rtcUrl}/api/frame.jpeg?src=${encodeURIComponent(streamName)}`;
   const response = await axios.get(url, {
     responseType: 'arraybuffer',
@@ -17,6 +52,13 @@ async function captureFrame(streamName) {
     throw new Error(`Frame too small (${response.data.byteLength} bytes)`);
   }
   return Buffer.from(response.data);
+}
+
+async function captureFrame(streamName, sourceUrl) {
+  if (sourceUrl && /^vnc:\/\//i.test(sourceUrl)) {
+    return captureVncFrame(sourceUrl);
+  }
+  return captureGo2rtcFrame(streamName);
 }
 
 async function uploadFrame(streamName, buffer) {
@@ -38,12 +80,24 @@ async function uploadFrame(streamName, buffer) {
   });
 }
 
-async function uploadFramesForStreams(streamNames = []) {
-  if (!config.deviceId || !streamNames.length) return;
+function normalizeStreams(streams = []) {
+  return streams.map((entry) => {
+    if (typeof entry === 'string') {
+      return { name: entry, source: null };
+    }
+    return {
+      name: entry?.name,
+      source: entry?.source || null,
+    };
+  }).filter((entry) => entry.name);
+}
 
-  for (const streamName of streamNames) {
+async function uploadFramesForStreams(streams = []) {
+  if (!config.deviceId || !streams.length) return;
+
+  for (const { name: streamName, source } of normalizeStreams(streams)) {
     try {
-      const buffer = await captureFrame(streamName);
+      const buffer = await captureFrame(streamName, source);
       await uploadFrame(streamName, buffer);
     } catch (err) {
       console.warn(`[agent] Frame upload failed (${streamName}):`, err.message);
