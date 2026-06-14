@@ -16,6 +16,7 @@ let kioskLoopTimer = null;
 let kioskLoopRunning = false;
 let reconnectTimer = null;
 let intentionalDisconnect = false;
+let staleDetectorTimer = null;
 
 // #region agent log
 function debugLog(hypothesisId, location, message, data = {}, runId = 'run1') {
@@ -78,6 +79,17 @@ function getLocalIp() {
   return null;
 }
 
+const STALE_CAMERA_THRESHOLD_MS = 30000;
+const STALE_CHECK_INTERVAL_MS = 60000;
+
+function log(level, msg, data = '') {
+  const ts = new Date().toISOString();
+  // eslint-disable-next-line no-console
+  console[level === 'warn' ? 'warn' : 'log'](
+    `[agent][socket][${level}] ${ts} — ${msg}${data ? ` | ${JSON.stringify(data)}` : ''}`
+  );
+}
+
 function startIntervals() {
   clearIntervals();
   heartbeatTimer = setInterval(() => heartbeat.send(socket), config.heartbeatIntervalMs);
@@ -86,6 +98,7 @@ function startIntervals() {
   refreshCameraStreamers();
   // Re-sync the set of camera decoders periodically in case go2rtc config changes.
   cameraRefreshTimer = setInterval(refreshCameraStreamers, 60000);
+  startStaleDetector();
   runKioskLoop();
 }
 
@@ -109,12 +122,54 @@ async function refreshCameraStreamers() {
     // #endregion
     await cameraStreamer.start(cameras);
   } catch (err) {
-    console.warn('[agent] Camera streamer refresh failed:', err.message);
+    log('warn', 'Camera streamer refresh failed', err.message);
     // #region agent log
     debugLog('H5', 'socket.js:refreshCameraStreamers:catch', 'Camera streamer refresh failed', {
       error: err.message,
     });
     // #endregion
+  }
+}
+
+function startStaleDetector() {
+  if (staleDetectorTimer) clearInterval(staleDetectorTimer);
+  staleDetectorTimer = setInterval(async () => {
+    try {
+      const health = cameraStreamer.getAllCameraHealth();
+      if (!health.length) return;
+
+      const summary = health.map(
+        (h) => `${h.name}: ffmpeg=${h.ffmpegAlive ? 'alive' : 'DEAD'} upload_stale=${h.uploadStaleMs == null ? 'never' : `${h.uploadStaleMs}ms`} restarts=${h.ffmpegRestarts}`
+      );
+      log('log', 'camera-health', summary);
+
+      const stale = health.filter((h) => {
+        if (!h.uploaderAlive) return true;
+        if (h.uploadStaleMs == null) return false;
+        return h.uploadStaleMs > STALE_CAMERA_THRESHOLD_MS;
+      });
+
+      if (stale.length > 0) {
+        log(
+          'warn',
+          `stale-detector: ${stale.length} stale camera(s) — forcing refresh`,
+          stale.map((h) => ({ name: h.name, uploadStaleMs: h.uploadStaleMs }))
+        );
+        for (const entry of stale) {
+          cameraStreamer.stopOne(entry.name);
+        }
+        await refreshCameraStreamers();
+      }
+    } catch (err) {
+      log('warn', 'stale-detector failed', err.message);
+    }
+  }, STALE_CHECK_INTERVAL_MS);
+}
+
+function stopStaleDetector() {
+  if (staleDetectorTimer) {
+    clearInterval(staleDetectorTimer);
+    staleDetectorTimer = null;
   }
 }
 
@@ -138,6 +193,7 @@ function clearIntervals() {
   kioskLoopRunning = false;
   if (cameraRefreshTimer) clearInterval(cameraRefreshTimer);
   if (kioskLoopTimer) clearTimeout(kioskLoopTimer);
+  stopStaleDetector();
   cameraStreamer.stop();
   heartbeatTimer = null;
   streamTimer = null;
@@ -147,7 +203,7 @@ function clearIntervals() {
 
 function scheduleReconnect(reason) {
   if (intentionalDisconnect || reconnectTimer) return;
-  console.warn('[agent] Scheduling reconnect:', reason);
+  log('warn', 'scheduling reconnect', reason);
   reconnectTimer = setTimeout(async () => {
     reconnectTimer = null;
     await connect();
@@ -167,7 +223,7 @@ async function connect() {
   commands.attach(socket);
 
   socket.on('connect', async () => {
-    console.log('[agent] Socket connected');
+    log('log', 'socket connected');
     await registerOnline();
     startIntervals();
     await heartbeat.send(socket);
@@ -175,13 +231,13 @@ async function connect() {
   });
 
   socket.on('connect_error', (err) => {
-    console.error('[agent] Connect error:', err.message);
+    log('warn', 'connect error', err.message);
     auth.clearToken();
     scheduleReconnect('connect_error');
   });
 
   socket.on('disconnect', (reason) => {
-    console.warn('[agent] Disconnected:', reason);
+    log('warn', 'disconnected', reason);
     clearIntervals();
     if (!intentionalDisconnect) {
       scheduleReconnect(reason);
@@ -189,7 +245,7 @@ async function connect() {
   });
 
   socket.on('device:online-ack', (data) => {
-    console.log('[agent] Online ack:', data?.deviceId, data?.status);
+    log('log', 'online ack', { deviceId: data?.deviceId, status: data?.status });
   });
 
   socket.on('device:heartbeat-ack', () => {

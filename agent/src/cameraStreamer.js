@@ -16,12 +16,22 @@ const streamFrames = require('./streamFrames');
 const FRAME_DIR = path.join(os.tmpdir(), 'railwatch-cam-frames');
 const SOI = Buffer.from([0xff, 0xd8]);
 const EOI = Buffer.from([0xff, 0xd9]);
+const FFMPEG_STALE_MS = 12000;
+const WATCHDOG_INTERVAL_MS = 8000;
+const FORCE_UPLOAD_AFTER_MS = 12000;
 
 const ffmpegProcs = new Map();   // name -> ChildProcess
 const uploadTimers = new Map();  // name -> interval handle
+const ffmpegWatchers = new Map(); // name -> fs.FSWatcher
+const watchdogTimers = new Map(); // name -> interval handle
 const lastMtime = new Map();     // name -> mtimeMs
 const lastSignature = new Map(); // name -> frame signature
 const uploadStats = new Map();   // name -> rolling stats
+const uploadInFlight = new Map(); // name -> bool
+const lastFfmpegWriteMs = new Map(); // name -> Date.now()
+const lastUploadOkMs = new Map(); // name -> Date.now()
+const ffmpegRestarts = new Map(); // name -> number
+const ffmpegStartedMs = new Map(); // name -> Date.now()
 let running = false;
 
 // #region agent log
@@ -88,6 +98,55 @@ function framePath(name) {
   return path.join(FRAME_DIR, `${name}.jpg`);
 }
 
+function noteFfmpegWrite(name) {
+  lastFfmpegWriteMs.set(name, Date.now());
+}
+
+function startFrameWatcher(name) {
+  const prev = ffmpegWatchers.get(name);
+  if (prev) {
+    try { prev.close(); } catch (_) {}
+    ffmpegWatchers.delete(name);
+  }
+  const target = path.basename(framePath(name));
+  try {
+    const watcher = fs.watch(FRAME_DIR, (_eventType, filename) => {
+      if (!filename) return;
+      if (String(filename) === target) {
+        noteFfmpegWrite(name);
+      }
+    });
+    ffmpegWatchers.set(name, watcher);
+  } catch (_) {
+    // Directory watches can fail on some kernels/filesystems; uploader fallback still works.
+  }
+}
+
+function stopWatchdog(name) {
+  const timer = watchdogTimers.get(name);
+  if (timer) {
+    clearInterval(timer);
+    watchdogTimers.delete(name);
+  }
+}
+
+function startWatchdog(name) {
+  stopWatchdog(name);
+  const timer = setInterval(() => {
+    const proc = ffmpegProcs.get(name);
+    if (!proc) return;
+    const now = Date.now();
+    const lastWrite = lastFfmpegWriteMs.get(name) || ffmpegStartedMs.get(name) || now;
+    const staleMs = now - lastWrite;
+    if (staleMs <= FFMPEG_STALE_MS) return;
+
+    // eslint-disable-next-line no-console
+    console.warn(`[agent][cameraStreamer][warn] watchdog: ffmpeg stalled stream=${name} stale_ms=${staleMs} — killing`);
+    try { proc.kill('SIGKILL'); } catch (_) {}
+  }, WATCHDOG_INTERVAL_MS);
+  watchdogTimers.set(name, timer);
+}
+
 function spawnFfmpeg(name, source) {
   const out = framePath(name);
   // #region agent log
@@ -111,6 +170,7 @@ function spawnFfmpeg(name, source) {
     '-y', out,
   ];
   const proc = spawn('ffmpeg', args, { stdio: 'ignore' });
+  ffmpegStartedMs.set(name, Date.now());
   proc.on('exit', (code) => {
     // #region agent log
     debugLog('H1', 'cameraStreamer.js:spawnFfmpeg:exit', 'ffmpeg decoder exited', {
@@ -119,11 +179,15 @@ function spawnFfmpeg(name, source) {
     });
     // #endregion
     ffmpegProcs.delete(name);
+    ffmpegRestarts.set(name, (ffmpegRestarts.get(name) || 0) + 1);
     if (running) {
-      setTimeout(() => { if (running) spawnFfmpeg(name, source); }, 3000);
+      const restartCount = ffmpegRestarts.get(name) || 0;
+      const restartDelayMs = Math.min(10000, 3000 + (restartCount * 500));
+      setTimeout(() => { if (running) spawnFfmpeg(name, source); }, restartDelayMs);
     }
   });
   ffmpegProcs.set(name, proc);
+  startWatchdog(name);
 }
 
 function isCompleteJpeg(buf) {
@@ -136,9 +200,26 @@ function isCompleteJpeg(buf) {
 function startUploader(name) {
   const out = framePath(name);
   const timer = setInterval(async () => {
+    if (uploadInFlight.get(name)) {
+      // #region agent log
+      debugLog('H6', 'cameraStreamer.js:startUploader:skipInflight', 'Skipped tick because upload still in-flight', {
+        streamName: name,
+      });
+      // #endregion
+      return;
+    }
+    uploadInFlight.set(name, true);
     try {
       const stat = await fsp.stat(out);
-      if (stat.mtimeMs === lastMtime.get(name)) return;
+      const now = Date.now();
+      const previousMtime = lastMtime.get(name);
+      const mtimeUnchanged = stat.mtimeMs === previousMtime;
+      const lastUploadMs = lastUploadOkMs.get(name) || 0;
+      const uploadStaleMs = lastUploadMs ? now - lastUploadMs : Infinity;
+      const forceUpload = mtimeUnchanged && uploadStaleMs >= FORCE_UPLOAD_AFTER_MS;
+
+      if (mtimeUnchanged && !forceUpload) return;
+
       const buf = await fsp.readFile(out);
       if (!isCompleteJpeg(buf)) return; // skip torn frame mid-write
       const sig = frameSignature(buf);
@@ -152,11 +233,12 @@ function startUploader(name) {
         frameChanged: changed,
       });
       // #endregion
-      lastMtime.set(name, stat.mtimeMs);
-      lastSignature.set(name, sig);
       const uploadStartMs = Date.now();
       await streamFrames.uploadFrame(name, buf);
       const uploadMs = Date.now() - uploadStartMs;
+      lastMtime.set(name, stat.mtimeMs);
+      lastSignature.set(name, sig);
+      lastUploadOkMs.set(name, Date.now());
       noteUploadStat(name, { changed, uploadMs });
       if (uploadMs > 1200) {
         // eslint-disable-next-line no-console
@@ -180,6 +262,8 @@ function startUploader(name) {
         statusCode: err.response?.status || null,
       });
       // #endregion
+    } finally {
+      uploadInFlight.set(name, false);
     }
   }, config.cameraUploadIntervalMs);
   uploadTimers.set(name, timer);
@@ -190,14 +274,20 @@ async function start(cameras = []) {
   await fsp.mkdir(FRAME_DIR, { recursive: true }).catch(() => {});
 
   const wanted = new Set(cameras.map((c) => c.name));
+  const existing = new Set([
+    ...ffmpegProcs.keys(),
+    ...uploadTimers.keys(),
+    ...ffmpegWatchers.keys(),
+  ]);
 
   // Stop streams that are no longer present.
-  for (const name of [...ffmpegProcs.keys()]) {
+  for (const name of existing) {
     if (!wanted.has(name)) stopOne(name);
   }
 
   for (const { name, source } of cameras) {
     if (!name || !source) continue;
+    if (!ffmpegWatchers.has(name)) startFrameWatcher(name);
     if (!ffmpegProcs.has(name)) spawnFfmpeg(name, source);
     if (!uploadTimers.has(name)) startUploader(name);
   }
@@ -208,13 +298,54 @@ function stopOne(name) {
   if (proc) { try { proc.kill('SIGKILL'); } catch (_) {} ffmpegProcs.delete(name); }
   const timer = uploadTimers.get(name);
   if (timer) { clearInterval(timer); uploadTimers.delete(name); }
+  const watcher = ffmpegWatchers.get(name);
+  if (watcher) { try { watcher.close(); } catch (_) {} ffmpegWatchers.delete(name); }
+  stopWatchdog(name);
+  uploadInFlight.delete(name);
   lastMtime.delete(name);
+  lastSignature.delete(name);
+  uploadStats.delete(name);
+  lastFfmpegWriteMs.delete(name);
+  lastUploadOkMs.delete(name);
+  ffmpegStartedMs.delete(name);
   fs.rmSync(framePath(name), { force: true });
 }
 
 function stop() {
   running = false;
-  for (const name of [...ffmpegProcs.keys()]) stopOne(name);
+  const allNames = new Set([
+    ...ffmpegProcs.keys(),
+    ...uploadTimers.keys(),
+    ...ffmpegWatchers.keys(),
+  ]);
+  for (const name of allNames) stopOne(name);
 }
 
-module.exports = { start, stop };
+function getCameraHealth(name) {
+  const now = Date.now();
+  const ffmpegWriteMs = lastFfmpegWriteMs.get(name) || null;
+  const uploadOkMs = lastUploadOkMs.get(name) || null;
+
+  return {
+    name,
+    ffmpegAlive: ffmpegProcs.has(name),
+    uploaderAlive: uploadTimers.has(name),
+    ffmpegRestarts: ffmpegRestarts.get(name) || 0,
+    lastFfmpegWriteMs: ffmpegWriteMs,
+    ffmpegStaleMs: ffmpegWriteMs == null ? null : now - ffmpegWriteMs,
+    lastUploadMs: uploadOkMs,
+    uploadStaleMs: uploadOkMs == null ? null : now - uploadOkMs,
+  };
+}
+
+function getAllCameraHealth() {
+  const names = new Set([
+    ...ffmpegProcs.keys(),
+    ...uploadTimers.keys(),
+    ...lastFfmpegWriteMs.keys(),
+    ...lastUploadOkMs.keys(),
+  ]);
+  return [...names].sort().map(getCameraHealth);
+}
+
+module.exports = { start, stop, stopOne, getCameraHealth, getAllCameraHealth };
