@@ -21,6 +21,7 @@ const ffmpegProcs = new Map();   // name -> ChildProcess
 const uploadTimers = new Map();  // name -> interval handle
 const lastMtime = new Map();     // name -> mtimeMs
 const lastSignature = new Map(); // name -> frame signature
+const uploadStats = new Map();   // name -> rolling stats
 let running = false;
 
 // #region agent log
@@ -51,6 +52,36 @@ function frameSignature(buf) {
   const q2 = Math.floor(len / 2);
   const q3 = Math.floor((len * 3) / 4);
   return [len, buf[0], buf[q1], buf[q2], buf[q3], buf[len - 1]].join(':');
+}
+
+function noteUploadStat(name, { changed, uploadMs }) {
+  const now = Date.now();
+  const stats = uploadStats.get(name) || {
+    windowStartMs: now,
+    uploads: 0,
+    changedUploads: 0,
+    totalUploadMs: 0,
+  };
+  stats.uploads += 1;
+  if (changed) stats.changedUploads += 1;
+  stats.totalUploadMs += uploadMs;
+
+  const elapsedMs = now - stats.windowStartMs;
+  if (elapsedMs >= 10000) {
+    const elapsedSec = elapsedMs / 1000;
+    const fps = stats.uploads / elapsedSec;
+    const changedFps = stats.changedUploads / elapsedSec;
+    const avgUploadMs = stats.uploads ? stats.totalUploadMs / stats.uploads : 0;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[agent][frame-stats] stream=${name} fps=${fps.toFixed(2)} changed_fps=${changedFps.toFixed(2)} avg_upload_ms=${avgUploadMs.toFixed(1)} uploads=${stats.uploads}`
+    );
+    stats.windowStartMs = now;
+    stats.uploads = 0;
+    stats.changedUploads = 0;
+    stats.totalUploadMs = 0;
+  }
+  uploadStats.set(name, stats);
 }
 
 function framePath(name) {
@@ -112,21 +143,30 @@ function startUploader(name) {
       if (!isCompleteJpeg(buf)) return; // skip torn frame mid-write
       const sig = frameSignature(buf);
       const prevSig = lastSignature.get(name);
+      const changed = prevSig !== sig;
       // #region agent log
       debugLog('H1', 'cameraStreamer.js:startUploader:beforeUpload', 'Prepared frame for upload', {
         streamName: name,
         fileMtimeMs: stat.mtimeMs,
         sizeBytes: buf.length,
-        frameChanged: prevSig !== sig,
+        frameChanged: changed,
       });
       // #endregion
       lastMtime.set(name, stat.mtimeMs);
       lastSignature.set(name, sig);
+      const uploadStartMs = Date.now();
       await streamFrames.uploadFrame(name, buf);
+      const uploadMs = Date.now() - uploadStartMs;
+      noteUploadStat(name, { changed, uploadMs });
+      if (uploadMs > 1200) {
+        // eslint-disable-next-line no-console
+        console.warn(`[agent][slow-upload] stream=${name} upload_ms=${uploadMs} size_bytes=${buf.length}`);
+      }
       // #region agent log
       debugLog('H2', 'cameraStreamer.js:startUploader:afterUpload', 'Frame upload succeeded', {
         streamName: name,
         uploadedBytes: buf.length,
+        uploadMs,
       });
       // #endregion
     } catch (err) {
