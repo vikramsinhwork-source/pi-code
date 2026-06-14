@@ -20,7 +20,38 @@ const EOI = Buffer.from([0xff, 0xd9]);
 const ffmpegProcs = new Map();   // name -> ChildProcess
 const uploadTimers = new Map();  // name -> interval handle
 const lastMtime = new Map();     // name -> mtimeMs
+const lastSignature = new Map(); // name -> frame signature
 let running = false;
+
+// #region agent log
+function debugLog(hypothesisId, location, message, data = {}, runId = 'run1') {
+  fetch('http://127.0.0.1:7515/ingest/ab84a119-a91c-4713-881e-a8c644fb3969', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Debug-Session-Id': '2b0af4',
+    },
+    body: JSON.stringify({
+      sessionId: '2b0af4',
+      runId,
+      hypothesisId,
+      location,
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+}
+// #endregion
+
+function frameSignature(buf) {
+  if (!buf || !buf.length) return 0;
+  const len = buf.length;
+  const q1 = Math.floor(len / 4);
+  const q2 = Math.floor(len / 2);
+  const q3 = Math.floor((len * 3) / 4);
+  return [len, buf[0], buf[q1], buf[q2], buf[q3], buf[len - 1]].join(':');
+}
 
 function framePath(name) {
   return path.join(FRAME_DIR, `${name}.jpg`);
@@ -28,6 +59,13 @@ function framePath(name) {
 
 function spawnFfmpeg(name, source) {
   const out = framePath(name);
+  // #region agent log
+  debugLog('H1', 'cameraStreamer.js:spawnFfmpeg', 'Starting ffmpeg decoder', {
+    streamName: name,
+    sourceScheme: String(source || '').split(':')[0] || 'unknown',
+    cameraFps: config.cameraFps,
+  });
+  // #endregion
   const args = [
     '-nostdin',
     '-rtsp_transport', 'tcp',
@@ -43,6 +81,12 @@ function spawnFfmpeg(name, source) {
   ];
   const proc = spawn('ffmpeg', args, { stdio: 'ignore' });
   proc.on('exit', (code) => {
+    // #region agent log
+    debugLog('H1', 'cameraStreamer.js:spawnFfmpeg:exit', 'ffmpeg decoder exited', {
+      streamName: name,
+      exitCode: code,
+    });
+    // #endregion
     ffmpegProcs.delete(name);
     if (running) {
       setTimeout(() => { if (running) spawnFfmpeg(name, source); }, 3000);
@@ -66,12 +110,36 @@ function startUploader(name) {
       if (stat.mtimeMs === lastMtime.get(name)) return;
       const buf = await fsp.readFile(out);
       if (!isCompleteJpeg(buf)) return; // skip torn frame mid-write
+      const sig = frameSignature(buf);
+      const prevSig = lastSignature.get(name);
+      // #region agent log
+      debugLog('H1', 'cameraStreamer.js:startUploader:beforeUpload', 'Prepared frame for upload', {
+        streamName: name,
+        fileMtimeMs: stat.mtimeMs,
+        sizeBytes: buf.length,
+        frameChanged: prevSig !== sig,
+      });
+      // #endregion
       lastMtime.set(name, stat.mtimeMs);
+      lastSignature.set(name, sig);
       await streamFrames.uploadFrame(name, buf);
+      // #region agent log
+      debugLog('H2', 'cameraStreamer.js:startUploader:afterUpload', 'Frame upload succeeded', {
+        streamName: name,
+        uploadedBytes: buf.length,
+      });
+      // #endregion
     } catch (err) {
       if (err.code === 'ENOENT') return; // decoder not producing yet
       // eslint-disable-next-line no-console
       console.warn(`[agent] Camera upload failed (${name}):`, err.message);
+      // #region agent log
+      debugLog('H2', 'cameraStreamer.js:startUploader:catch', 'Frame upload failed', {
+        streamName: name,
+        error: err.message,
+        statusCode: err.response?.status || null,
+      });
+      // #endregion
     }
   }, config.cameraUploadIntervalMs);
   uploadTimers.set(name, timer);
