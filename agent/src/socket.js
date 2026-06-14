@@ -17,6 +17,27 @@ let kioskLoopRunning = false;
 let reconnectTimer = null;
 let intentionalDisconnect = false;
 
+// #region agent log
+function debugLog(hypothesisId, location, message, data = {}, runId = 'run1') {
+  fetch('http://127.0.0.1:7515/ingest/ab84a119-a91c-4713-881e-a8c644fb3969', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Debug-Session-Id': '2b0af4',
+    },
+    body: JSON.stringify({
+      sessionId: '2b0af4',
+      runId,
+      hypothesisId,
+      location,
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+}
+// #endregion
+
 function buildSocket() {
   return io(config.socketUrl, {
     transports: ['websocket', 'polling'],
@@ -78,9 +99,22 @@ async function refreshCameraStreamers() {
     const cameras = parsed.streams
       .filter((s) => s.source && !/^vnc:\/\//i.test(s.source))
       .map((s) => ({ name: s.name, source: s.source }));
+    // #region agent log
+    debugLog('H5', 'socket.js:refreshCameraStreamers', 'Refreshed camera decoder set', {
+      parsedTotal: parsed.summary.total,
+      candidateCameraCount: cameras.length,
+      cameraNames: cameras.map((c) => c.name),
+      vncOnlyNames: parsed.streams.filter((s) => /^vnc:\/\//i.test(String(s.source || ''))).map((s) => s.name),
+    });
+    // #endregion
     await cameraStreamer.start(cameras);
   } catch (err) {
     console.warn('[agent] Camera streamer refresh failed:', err.message);
+    // #region agent log
+    debugLog('H5', 'socket.js:refreshCameraStreamers:catch', 'Camera streamer refresh failed', {
+      error: err.message,
+    });
+    // #endregion
   }
 }
 

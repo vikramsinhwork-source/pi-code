@@ -3,6 +3,27 @@ const config = require('./config');
 const auth = require('./auth');
 const streamFrames = require('./streamFrames');
 
+// #region agent log
+function debugLog(hypothesisId, location, message, data = {}, runId = 'run1') {
+  fetch('http://127.0.0.1:7515/ingest/ab84a119-a91c-4713-881e-a8c644fb3969', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Debug-Session-Id': '2b0af4',
+    },
+    body: JSON.stringify({
+      sessionId: '2b0af4',
+      runId,
+      hypothesisId,
+      location,
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+}
+// #endregion
+
 function parseCodecsFromMedias(medias) {
   const codecs = [];
   for (const media of medias || []) {
@@ -109,6 +130,20 @@ async function pollAndReport(socket) {
     await auth.ensureToken();
     const raw = await fetchGo2rtcStreams();
     const parsed = parseStreamHealth(raw);
+    // #region agent log
+    debugLog('H5', 'streams.js:pollAndReport', 'Parsed go2rtc stream health snapshot', {
+      totalStreams: parsed.summary.total,
+      onlineStreams: parsed.summary.online,
+      offlineStreams: parsed.summary.offline,
+      streamsWithoutSource: parsed.streams.filter((s) => !s.source).map((s) => s.name),
+      sample: parsed.streams.slice(0, 6).map((s) => ({
+        name: s.name,
+        online: s.online,
+        producerCount: s.producerCount,
+        hasSource: !!s.source,
+      })),
+    });
+    // #endregion
 
     const payload = {
       deviceId: config.deviceId,
