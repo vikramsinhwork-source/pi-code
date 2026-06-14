@@ -106,8 +106,8 @@ function spawnFfmpeg(name, source) {
     '-i', source,
     '-an',
     '-r', String(config.cameraFps),
-    '-vf', 'scale=480:-1',  // shrink to 480px wide — reduces file from 60KB → ~8KB
-    '-q:v', '12',           // lower quality (7=best/heavy, 31=worst/tiny) — sweet spot at 12
+    '-vf', 'scale=320:-1',  // 320px wide → ~6KB per frame → ~1fps per camera at 29KB/s
+    '-q:v', '15',           // balanced quality for small size
     '-f', 'image2',
     '-update', '1',
     '-y', out,
