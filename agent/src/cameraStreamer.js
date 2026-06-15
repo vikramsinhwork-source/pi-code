@@ -106,8 +106,8 @@ function spawnFfmpeg(name, source) {
     '-i', source,
     '-an',
     '-r', String(config.cameraFps),
-    '-vf', 'scale=320:-1',  // 320px wide → ~6KB per frame → ~1fps per camera at 29KB/s
-    '-q:v', '15',           // balanced quality for small size
+    '-vf', 'scale=640:-1',  // 640px wide target for clearer frames
+    '-q:v', '8',            // higher JPEG quality, ~15-20KB/frame
     '-f', 'image2',
     '-update', '1',
     '-y', out,
