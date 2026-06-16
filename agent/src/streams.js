@@ -24,6 +24,17 @@ function debugLog(hypothesisId, location, message, data = {}, runId = 'run1') {
 }
 // #endregion
 
+function extractRtspUrl(url) {
+  if (!url) return null;
+  // Handle go2rtc ffmpeg format: "ffmpeg:rtsp://...#video=h264#hardware"
+  if (typeof url === 'string' && url.startsWith('ffmpeg:')) {
+    const match = url.match(/ffmpeg:(rtsp:\/\/[^#]+)/);
+    return match ? match[1] : null;
+  }
+  // Handle plain rtsp:// or vnc:// urls - return as-is
+  return url;
+}
+
 function parseCodecsFromMedias(medias) {
   const codecs = [];
   for (const media of medias || []) {
@@ -93,7 +104,7 @@ function parseStreamEntry(name, info = {}) {
     codec: [...new Set(codecs)][0] || null,
     codecs: [...new Set(codecs)],
     fps,
-    source: producers[0]?.url || info.url || null,
+    source: extractRtspUrl(producers[0]?.url || info.url || null),
   };
 }
 
