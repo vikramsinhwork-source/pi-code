@@ -1,11 +1,11 @@
 const config = require('./config');
 
-async function proxyOfferToGo2rtc(streamName, sdp) {
+async function proxyOfferToGo2rtc(streamName, type, sdp) {
   const url = `${config.go2rtcUrl}/api/webrtc?src=${encodeURIComponent(streamName)}`;
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'offer', sdp }),
+    body: JSON.stringify({ type, sdp }),
   });
 
   if (!response.ok) {
@@ -17,36 +17,23 @@ async function proxyOfferToGo2rtc(streamName, sdp) {
 }
 
 function attach(socket) {
-  socket.on('device:webrtc-offer', async (payload, ack) => {
-    const streamName = payload?.streamName;
-    const sdp = payload?.sdp;
-    if (!streamName || typeof sdp !== 'string' || !sdp.trim()) {
-      if (typeof ack === 'function') {
-        ack({ error: 'streamName and sdp are required' });
-      }
-      return;
-    }
+  socket.on('webrtc:offer', async (payload) => {
+    const { requestId, streamName, type, sdp } = payload || {};
+
+    console.log('[agent][webrtc] Received offer', streamName, requestId);
 
     try {
-      console.log('[agent] WebRTC offer relay', { streamName, requestId: payload?.requestId || null });
-      const answer = await proxyOfferToGo2rtc(streamName, sdp);
-      if (typeof ack === 'function') {
-        ack({ type: answer.type, sdp: answer.sdp });
-        return;
-      }
-      socket.emit('device:webrtc-offer-answer', {
-        requestId: payload?.requestId,
+      const answer = await proxyOfferToGo2rtc(streamName, type, sdp);
+      socket.emit('webrtc:answer', {
+        requestId,
         type: answer.type,
         sdp: answer.sdp,
       });
+      console.log('[agent][webrtc] Answer sent', requestId);
     } catch (err) {
-      console.error('[agent] WebRTC offer relay failed:', err.message);
-      if (typeof ack === 'function') {
-        ack({ error: err.message });
-        return;
-      }
-      socket.emit('device:webrtc-offer-answer', {
-        requestId: payload?.requestId,
+      console.error('[agent][webrtc] Failed', err);
+      socket.emit('webrtc:answer', {
+        requestId,
         error: err.message,
       });
     }
