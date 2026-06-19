@@ -8,6 +8,7 @@ const streamFrames = require('./streamFrames');
 const cameraStreamer = require('./cameraStreamer');
 const commands = require('./commands');
 const webrtc = require('./webrtc');
+const streamSession = require('./streamSession');
 
 let socket = null;
 let heartbeatTimer = null;
@@ -223,6 +224,7 @@ async function connect() {
   socket = buildSocket();
   commands.attach(socket);
   webrtc.attach(socket);
+  streamSession.attach(socket);
 
   socket.on('connect', async () => {
     log('log', 'socket connected');

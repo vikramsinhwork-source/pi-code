@@ -23,6 +23,7 @@ const lastFfmpegWriteMs = new Map();  // name -> timestamp ffmpeg last changed f
 const lastUploadSuccessMs = new Map(); // name -> timestamp of last successful upload
 const ffmpegRestartCount = new Map();  // name -> number of restarts
 const ffmpegStartedMs = new Map();     // name -> when current process started
+const pausedForStream = new Set();     // names paused during live WebRTC sessions
 
 let running = false;
 
@@ -313,6 +314,7 @@ async function start(cameras = []) {
 
   for (const { name, source } of cameras) {
     if (!name || !source) continue;
+    if (pausedForStream.has(name)) continue;
     if (!ffmpegProcs.has(name)) {
       spawnFfmpeg(name, source);
       startWatchdog(name, source); // ← start watchdog alongside ffmpeg
@@ -339,7 +341,31 @@ function stopOne(name) {
 
 function stop() {
   running = false;
+  pausedForStream.clear();
   for (const name of [...ffmpegProcs.keys()]) stopOne(name);
 }
 
-module.exports = { start, stop, getCameraHealth, getAllCameraHealth };
+function pauseForStream(streamNames = []) {
+  for (const name of streamNames) {
+    if (!name) continue;
+    pausedForStream.add(name);
+    if (ffmpegProcs.has(name) || uploadTimers.has(name)) {
+      stopOne(name);
+    }
+  }
+}
+
+function resumeAfterStream(streamNames = []) {
+  for (const name of streamNames) {
+    if (name) pausedForStream.delete(name);
+  }
+}
+
+module.exports = {
+  start,
+  stop,
+  pauseForStream,
+  resumeAfterStream,
+  getCameraHealth,
+  getAllCameraHealth,
+};
