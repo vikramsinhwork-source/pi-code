@@ -1,0 +1,37 @@
+# Example go2rtc config for RailWatch Pi (copy to ~/go2rtc.yaml or /etc/go2rtc/go2rtc.yaml)
+# Chrome WebRTC requires H.264 — transcode H.265 DVR streams with ffmpeg exec lines.
+#
+# Verify on Pi:
+#   curl -s http://127.0.0.1:1984/api/streams | jq .
+#   curl -X POST "http://127.0.0.1:1984/api/webrtc?src=camera1" \
+#     -H "Content-Type: application/json" \
+#     -d '{"type":"offer","sdp":"v=0\r\n..."}'
+
+api:
+  listen: ":1984"
+
+webrtc:
+  listen: ":8555/tcp"
+  candidates:
+    - 192.168.1.9:8555  # Pi LAN IP — required for remote browsers to reach go2rtc media
+
+streams:
+  camera1:
+    - rtsp://admin:PASSWORD@192.168.1.64:554/Streaming/Channels/101
+    - ffmpeg:camera1#video=h264#hardware
+  camera2:
+    - rtsp://admin:PASSWORD@192.168.1.65:554/Streaming/Channels/101
+    - ffmpeg:camera2#video=h264#hardware
+  camera3:
+    - rtsp://admin:PASSWORD@192.168.1.66:554/Streaming/Channels/101
+    - ffmpeg:camera3#video=h264#hardware
+  camera4:
+    - rtsp://admin:PASSWORD@192.168.1.67:554/Streaming/Channels/101
+    - ffmpeg:camera4#video=h264#hardware
+  camera5:
+    - rtsp://admin:PASSWORD@192.168.1.68:554/Streaming/Channels/101
+    - ffmpeg:camera5#video=h264#hardware
+
+  # Kiosk VNC (optional)
+  # kiosk1:
+  #   - vnc://127.0.0.1:5900

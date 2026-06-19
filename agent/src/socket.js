@@ -96,12 +96,17 @@ function startIntervals() {
   clearIntervals();
   heartbeatTimer = setInterval(() => heartbeat.send(socket), config.heartbeatIntervalMs);
   streamTimer = setInterval(() => streams.pollAndReport(socket), config.streamPollIntervalMs);
-  kioskLoopRunning = true;
-  refreshCameraStreamers();
-  // Re-sync the set of camera decoders periodically in case go2rtc config changes.
-  cameraRefreshTimer = setInterval(refreshCameraStreamers, 60000);
-  startStaleDetector();
-  runKioskLoop();
+
+  if (config.jpegPipelineEnabled) {
+    kioskLoopRunning = true;
+    refreshCameraStreamers();
+    cameraRefreshTimer = setInterval(refreshCameraStreamers, 60000);
+    startStaleDetector();
+    runKioskLoop();
+  } else {
+    console.log('[agent][socket] JPEG pipeline disabled (JPEG_PIPELINE_ENABLED=false)');
+    cameraStreamer.stop();
+  }
 }
 
 // Cameras (RTSP/HEVC): run one persistent ffmpeg decoder per camera (warm), each

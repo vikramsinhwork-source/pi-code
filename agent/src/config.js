@@ -23,6 +23,8 @@ module.exports = {
   cameraUploadIntervalMs: Number(process.env.CAMERA_UPLOAD_INTERVAL_MS || 350),
   go2rtcUrl: (process.env.GO2RTC_URL || 'http://127.0.0.1:1984').replace(/\/$/, ''),
   go2rtcStreamsPath: process.env.GO2RTC_STREAMS_PATH || '/api/streams',
+  /** Set JPEG_PIPELINE_ENABLED=false on Pi for WebRTC-only testing (no ffmpeg JPEG upload). */
+  jpegPipelineEnabled: process.env.JPEG_PIPELINE_ENABLED !== 'false',
   reconnectDelayMs: Number(process.env.RECONNECT_DELAY_MS || 5000),
   tokenRefreshMarginMs: Number(process.env.TOKEN_REFRESH_MARGIN_MS || 300000),
   screenshotDir: process.env.SCREENSHOT_DIR || '/tmp/railwatch-screenshots',
