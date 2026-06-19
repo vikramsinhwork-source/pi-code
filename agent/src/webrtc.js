@@ -3,6 +3,7 @@
  * Browser offer → Socket.IO → this module → POST go2rtc → answer back.
  */
 const config = require('./config');
+const { logSdpSummary, compareOfferAnswer } = require('./sdpDiagnostics');
 
 function go2rtcWebrtcUrl(streamName) {
   return `${config.go2rtcUrl}/api/webrtc?src=${encodeURIComponent(streamName)}`;
@@ -70,8 +71,15 @@ async function postSdpToGo2rtc(streamName, type, sdp) {
       }
 
       console.log(
-        `[agent][webrtc] go2rtc answer received stream=${streamName} via=${attempt.label} answer_bytes=${answer.sdp.length}`
+        `[agent][webrtc] go2rtc answer received stream=${streamName} via=${attempt.label} content-type=${contentType} answer_bytes=${answer.sdp.length}`
       );
+      logSdpSummary(`go2rtc-answer:${streamName}`, answer.sdp);
+      if (sdp) {
+        const cmp = compareOfferAnswer(sdp, answer.sdp);
+        if (cmp.notes.length) {
+          console.log(`[agent][webrtc] offer/answer notes stream=${streamName}: ${cmp.notes.join('; ')}`);
+        }
+      }
       return answer;
     } catch (err) {
       lastError = err;
@@ -192,13 +200,17 @@ function attach(socket) {
     console.log('[agent][webrtc] Received offer', streamName, requestId);
 
     try {
+      logSdpSummary(`browser-offer:${streamName}`, sdp);
       const answer = await proxyOfferToGo2rtc(streamName, type, sdp);
-      socket.emit('webrtc:answer', {
+      const payload = {
         requestId,
-        type: answer.type,
+        type: answer.type || 'answer',
         sdp: answer.sdp,
-      });
-      console.log(`[agent][webrtc] go2rtc answer forwarded stream=${streamName} requestId=${requestId}`);
+      };
+      socket.emit('webrtc:answer', payload);
+      console.log(
+        `[agent][webrtc] go2rtc answer forwarded stream=${streamName} requestId=${requestId} type=${payload.type} sdp_bytes=${payload.sdp.length}`
+      );
     } catch (err) {
       console.error(`[agent][webrtc] go2rtc proxy failed stream=${streamName}:`, err.message);
       socket.emit('webrtc:answer', {

@@ -3,6 +3,7 @@ const streams = require('./streams');
 const streamFrames = require('./streamFrames');
 const cameraStreamer = require('./cameraStreamer');
 const webrtc = require('./webrtc');
+const { logSdpSummary } = require('./sdpDiagnostics');
 
 /** @type {Map<string, object>} */
 const sessions = new Map();
@@ -208,6 +209,7 @@ async function handleAgentOffer(socket, payload = {}) {
 
   try {
     log('log', `agent-offer received sessionId=${sessionId}, POSTing viewer offer to go2rtc`);
+    logSdpSummary(`viewer-offer:${session.go2rtcSrc}`, offer.sdp);
     const go2rtcAnswer = await webrtc.proxyViewerOfferToGo2rtc(session.go2rtcSrc, offer);
 
     session.status = 'active';

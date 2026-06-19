@@ -5,7 +5,8 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "webrtc:diagnose": "node scripts/webrtc-diagnose.js"
   },
   "keywords": ["railway", "monitoring", "raspberry-pi", "go2rtc"],
   "license": "ISC",

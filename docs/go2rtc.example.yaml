@@ -1,11 +1,16 @@
 # Example go2rtc config for RailWatch Pi (copy to ~/go2rtc.yaml or /etc/go2rtc/go2rtc.yaml)
 # Chrome WebRTC requires H.264 — transcode H.265 DVR streams with ffmpeg exec lines.
 #
+# Encode mode A/B:
+#   docs/go2rtc.example.hardware.yaml  — #video=h264#hardware (Pi V4L2; may corrupt in browser)
+#   docs/go2rtc.example.software.yaml  — #video=h264 (libx264; safer for WebRTC)
+#   agent/scripts/generate-go2rtc-yaml.js — GO2RTC_ENCODE_MODE=software|hardware
+#
+# Dahua RTSP: subtype=1 = substream (lower res), subtype=0 = main stream.
+#
 # Verify on Pi:
 #   curl -s http://127.0.0.1:1984/api/streams | jq .
-#   curl -X POST "http://127.0.0.1:1984/api/webrtc?src=camera1" \
-#     -H "Content-Type: application/json" \
-#     -d '{"type":"offer","sdp":"v=0\r\n..."}'
+#   node agent/scripts/webrtc-diagnose.js camera2
 
 api:
   listen: ":1984"

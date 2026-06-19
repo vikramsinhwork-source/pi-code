@@ -1,0 +1,42 @@
+# go2rtc config — MODE B: software H264 transcode (libx264, browser-safe)
+# Use this when hardware (#hardware) produces gray/corrupted WebRTC video.
+# Copy to ~/go2rtc.yaml and: sudo systemctl restart go2rtc
+#
+# TURN / ICE (read this):
+#   • Browser STUN/TURN comes from Railway backend /api/monitoring/ice-config
+#     (turn.railwaymonitor.in) — NOT from this file.
+#   • go2rtc ALSO needs ice_servers below when viewers are remote and the Pi is
+#     on LAN (192.168.x.x). candidates alone only works for same-LAN browsers.
+#   • If you already had ice_servers in your live go2rtc.yaml, copy them here
+#     when switching to software encode — do not drop TURN.
+
+api:
+  listen: ":1984"
+
+webrtc:
+  listen: ":8555/tcp"
+  candidates:
+    - 192.168.1.9:8555  # Pi LAN IP — same-LAN viewers only
+  # Required for remote browsers (internet → Pi behind NAT). Match Railway coturn:
+  ice_servers:
+    - urls: [stun:stun.l.google.com:19302]
+    - urls: [turn:turn.railwaymonitor.in:3478]
+      username: turnuser      # same as TURN_USERNAME on VPS
+      credential: turnpassword  # same as TURN_PASSWORD on VPS
+
+streams:
+  # ── Mode B: software H264 (no #hardware) ─────────────────────────────────
+  camera1:
+    - ffmpeg:rtsp://admin:PASSWORD@192.168.1.3:554/cam/realmonitor?channel=1&subtype=1#video=h264
+  camera2:
+    - ffmpeg:rtsp://admin:PASSWORD@192.168.1.3:554/cam/realmonitor?channel=2&subtype=1#video=h264
+  camera3:
+    - ffmpeg:rtsp://admin:PASSWORD@192.168.1.3:554/cam/realmonitor?channel=3&subtype=1#video=h264
+  camera4:
+    - ffmpeg:rtsp://admin:PASSWORD@192.168.1.3:554/cam/realmonitor?channel=4&subtype=1#video=h264
+  camera5:
+    - ffmpeg:rtsp://admin:PASSWORD@192.168.1.3:554/cam/realmonitor?channel=5&subtype=1#video=h264
+
+  # ── Main stream (subtype=0) software — for A/B test vs substream
+  # camera2_main:
+  #   - ffmpeg:rtsp://admin:PASSWORD@192.168.1.3:554/cam/realmonitor?channel=2&subtype=0#video=h264
