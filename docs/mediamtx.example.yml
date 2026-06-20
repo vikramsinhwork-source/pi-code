@@ -1,0 +1,59 @@
+# RailWatch Pi — copy to /etc/mediamtx/mediamtx.yml (or ~/mediamtx.yml for dev)
+#   sudo cp docs/mediamtx.example.yml /etc/mediamtx/mediamtx.yml
+#   sudo systemctl restart mediamtx
+#
+# Local WebRTC test: http://127.0.0.1:8889/camera1/
+# API health:        curl -s http://127.0.0.1:9997/v3/paths/list | jq .
+#
+# Set webrtcAdditionalHosts to the Pi LAN IP and any edge DNS names clients use.
+# RTSP credentials and NVR IP should match your Dahua/RailNet deployment.
+
+logLevel: info
+
+api: yes
+apiAddress: :9997
+
+rtsp: yes
+rtspAddress: :8554
+
+hls: yes
+hlsAddress: :8888
+
+webrtc: yes
+webrtcAddress: :8889
+
+webrtcAdditionalHosts:
+  - 192.168.1.10
+  - railwatch-pi.local
+
+webrtcICEServers2:
+  - url: turn:turn.railwaymonitor.in:3478
+    username: turnuser
+    password: turnpassword
+    clientOnly: true
+
+paths:
+  camera1:
+    source: rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=1&subtype=1
+    sourceOnDemand: yes
+    sourceProtocol: tcp
+  camera2:
+    source: rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=2&subtype=1
+    sourceOnDemand: yes
+    sourceProtocol: tcp
+  camera3:
+    source: rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=3&subtype=1
+    sourceOnDemand: yes
+    sourceProtocol: tcp
+  camera4:
+    source: rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=4&subtype=1
+    sourceOnDemand: yes
+    sourceProtocol: tcp
+  camera5:
+    source: rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=5&subtype=1
+    sourceOnDemand: yes
+    sourceProtocol: tcp
+  kiosk1:
+    sourceOnDemand: no
+  kiosk2:
+    sourceOnDemand: no

@@ -20,9 +20,11 @@ async function captureDesktop(outputPath) {
 }
 
 async function captureKiosk(outputPath) {
-  const streamName = process.env.STREAM_NAME || 'kiosk1';
-  const frameUrl = `${config.go2rtcUrl}/api/frame.jpeg?src=${streamName}`;
-  await execAsync(`curl -sf "${frameUrl}" -o "${outputPath}"`);
+  const vncTarget = process.env.KIOSK_VNC_TARGET;
+  if (!vncTarget) {
+    throw new Error('KIOSK_VNC_TARGET is not set (e.g. 10.71.35.210:0)');
+  }
+  await execAsync(`vncsnapshot -quality 80 -allowblank "${vncTarget}" "${outputPath}"`);
 }
 
 async function captureBoth() {

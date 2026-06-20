@@ -42,27 +42,28 @@ async function captureVncFrame(vncUrl) {
   return buffer;
 }
 
-async function captureGo2rtcFrame(streamName) {
-  const url = `${config.go2rtcUrl}/api/frame.jpeg?src=${encodeURIComponent(streamName)}`;
-  const response = await axios.get(url, {
-    responseType: 'arraybuffer',
-    timeout: 20000,
-    validateStatus: (s) => s === 200,
-  });
-  if (!response.data?.byteLength) {
-    throw new Error('Empty frame');
-  }
-  if (response.data.byteLength < 500) {
-    throw new Error(`Frame too small (${response.data.byteLength} bytes)`);
-  }
-  return Buffer.from(response.data);
+async function captureRtspFrame(streamName) {
+  const rtspUrl = `rtsp://127.0.0.1:8554/${encodeURIComponent(streamName)}`;
+  const tmpPath = path.join(os.tmpdir(), `railwatch-frame-${Date.now()}.jpg`);
+  await execFileAsync(
+    'ffmpeg',
+    ['-hide_banner', '-loglevel', 'error', '-y', '-rtsp_transport', 'tcp', '-i', rtspUrl, '-frames:v', '1', '-q:v', '3', tmpPath],
+    { timeout: 30000 }
+  );
+
+  const buffer = await fs.readFile(tmpPath);
+  await fs.unlink(tmpPath).catch(() => {});
+
+  if (!buffer?.length) throw new Error('Empty frame');
+  if (buffer.length < 500) throw new Error(`Frame too small (${buffer.length} bytes)`);
+  return buffer;
 }
 
 async function captureFrame(streamName, sourceUrl) {
   if (isVncSource(sourceUrl)) {
     return captureVncFrame(sourceUrl);
   }
-  return captureGo2rtcFrame(streamName);
+  return captureRtspFrame(streamName);
 }
 
 async function uploadFrame(streamName, buffer) {
@@ -101,10 +102,7 @@ async function uploadOneStream({ name: streamName, source }) {
   await uploadFrame(streamName, buffer);
 }
 
-// Capture/upload strictly one stream at a time. Each go2rtc frame.jpeg spawns an
-// ffmpeg decode; running several HEVC decodes in parallel overloads the Pi. Doing
-// them sequentially keeps load low and is self-throttling (next frame starts only
-// after the previous upload completes).
+// Capture/upload strictly one stream at a time to avoid overloading the Pi.
 async function uploadFramesForStreams(streams = [], { vncOnly = false, rtspOnly = false } = {}) {
   if (!config.deviceId || !streams.length) return;
 

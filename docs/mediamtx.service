@@ -1,0 +1,17 @@
+[Unit]
+Description=MediaMTX stream gateway (RailWatch Pi)
+Documentation=https://github.com/bluenviron/mediamtx
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+ExecStart=/usr/local/bin/mediamtx /etc/mediamtx/mediamtx.yml
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

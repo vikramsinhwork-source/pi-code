@@ -7,8 +7,8 @@ Production agent for the Railway Lobby Monitoring System. Connects to the backen
 - JWT authentication via `POST /api/auth/device-token`
 - Socket.IO events: `device:online`, `device:heartbeat`, `device:stream-status`
 - REST fallbacks: register, heartbeat, stream-status, screenshot upload
-- go2rtc stream health polling every 30 seconds
-- Remote commands: reboot, restart go2rtc, restart agent, capture screenshot, git update
+- MediaMTX path health polling every 30 seconds
+- Remote commands: reboot, restart mediamtx, restart agent, capture screenshot, git update
 - Automatic token refresh and reconnect
 
 ## Quick Start
@@ -33,11 +33,12 @@ pm2 save
 ## Prerequisites on Raspberry Pi
 
 - Node.js 18+
-- go2rtc running on port 1984
+- MediaMTX running (see `docs/mediamtx.example.yml` and `agent/scripts/install-mediamtx.sh`)
 - `scrot` for desktop screenshots
-- `curl` for kiosk frame capture
+- `ffmpeg` for optional JPEG frame pipeline
+- `vncsnapshot` for kiosk frame capture (optional)
 - PM2 for process management
 
 ## Architecture
 
-See [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) and [docs/API.md](../docs/API.md).
+See [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) and [docs/streaming-architecture-mediamtx.md](../docs/streaming-architecture-mediamtx.md).

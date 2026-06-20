@@ -6,9 +6,9 @@
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test test/*.test.js",
-    "webrtc:diagnose": "node scripts/webrtc-diagnose.js"
+    "mediamtx:diagnose": "node scripts/mediamtx-diagnose.js"
   },
-  "keywords": ["railway", "monitoring", "raspberry-pi", "go2rtc"],
+  "keywords": ["railway", "monitoring", "raspberry-pi", "mediamtx"],
   "license": "ISC",
   "dependencies": {
     "axios": "^1.17.0",

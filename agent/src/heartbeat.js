@@ -14,6 +14,7 @@ async function registerViaRest(payload) {
       ipAddress: payload.ipAddress,
       agentVersion: config.agentVersion,
       serialNumber: payload.serialNumber || config.deviceId,
+      mediamtxPaths: payload.mediamtxPaths || config.mediamtxPaths,
     },
     { headers: { Authorization: `Bearer ${token}` } }
   );

@@ -34,10 +34,17 @@ function attach(socket) {
     });
   });
 
+  socket.on('device:restart-mediamtx', async (payload) => {
+    console.log('[agent] Command: restart-mediamtx', payload?.commandId);
+    await runCommand(socket, payload, 'restart-mediamtx', async () => {
+      await execAsync('sudo systemctl restart mediamtx');
+    });
+  });
+
   socket.on('device:restart-go2rtc', async (payload) => {
-    console.log('[agent] Command: restart-go2rtc', payload?.commandId);
-    await runCommand(socket, payload, 'restart-go2rtc', async () => {
-      await execAsync('sudo systemctl restart go2rtc || pm2 restart go2rtc');
+    console.log('[agent] Command: restart-go2rtc (legacy alias → mediamtx)', payload?.commandId);
+    await runCommand(socket, payload, 'restart-mediamtx', async () => {
+      await execAsync('sudo systemctl restart mediamtx');
     });
   });
 

@@ -7,8 +7,6 @@ const streams = require('./streams');
 const streamFrames = require('./streamFrames');
 const cameraStreamer = require('./cameraStreamer');
 const commands = require('./commands');
-const webrtc = require('./webrtc');
-const streamSession = require('./streamSession');
 
 let socket = null;
 let heartbeatTimer = null;
@@ -57,7 +55,8 @@ async function registerOnline() {
     agentVersion: config.agentVersion,
     ipAddress: getLocalIp(),
     stationCode: config.stationCode,
-    capabilities: { go2rtc: true, screenshot: true, update: true },
+    capabilities: { mediamtx: true, screenshot: true, update: true },
+    mediamtxPaths: config.mediamtxPaths,
   };
 
   socket.emit('device:online', payload);
@@ -115,7 +114,7 @@ function startIntervals() {
 // near-live video without per-frame ffmpeg startup cost.
 async function refreshCameraStreamers() {
   try {
-    const raw = await streams.fetchGo2rtcStreams();
+    const raw = await streams.fetchMediaMtxPaths();
     const parsed = streams.parseStreamHealth(raw);
     const cameras = parsed.streams
       .filter((s) => s.source && !/^vnc:\/\//i.test(s.source))
@@ -185,7 +184,7 @@ function stopStaleDetector() {
 async function runKioskLoop() {
   if (!kioskLoopRunning) return;
   try {
-    const raw = await streams.fetchGo2rtcStreams();
+    const raw = await streams.fetchMediaMtxPaths();
     const parsed = streams.parseStreamHealth(raw);
     await streamFrames.uploadFramesForStreams(parsed.streams, { vncOnly: true });
   } catch (err) {
@@ -229,8 +228,6 @@ async function connect() {
 
   socket = buildSocket();
   commands.attach(socket);
-  webrtc.attach(socket);
-  streamSession.attach(socket);
 
   socket.on('connect', async () => {
     log('log', 'socket connected');

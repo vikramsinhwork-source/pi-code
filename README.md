@@ -13,7 +13,7 @@ pi-code/
 │   │   ├── auth.js        # JWT device-token
 │   │   ├── socket.js      # Socket.IO connection
 │   │   ├── heartbeat.js
-│   │   ├── streams.js     # go2rtc polling
+│   │   ├── streams.js     # MediaMTX path polling
 │   │   ├── screenshot.js
 │   │   ├── commands.js
 │   │   └── updater.js

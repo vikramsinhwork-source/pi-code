@@ -11,35 +11,28 @@ describe('Agent auth', () => {
 });
 
 describe('Agent streams', () => {
-  test('parseStreamHealth determines online/offline and counts', () => {
+  test('parseStreamHealth determines online/offline from MediaMTX ready flag', () => {
     const streams = require('../src/streams');
     const parsed = streams.parseStreamHealth({
-      kiosk1: { producers: [{ url: 'vnc://10.0.0.1:5900' }], consumers: [] },
-      kiosk2: { producers: [], consumers: [] },
+      camera1: { ready: true, source: 'rtsp://nvr/cam1' },
+      camera2: { ready: false },
     });
     assert.strictEqual(parsed.summary.online, 1);
     assert.strictEqual(parsed.summary.offline, 1);
-    assert.strictEqual(parsed.streams[0].producers, 1);
-    assert.strictEqual(parsed.streams[0].consumers, 0);
     assert.strictEqual(parsed.streams[0].online, true);
     assert.strictEqual(parsed.streams[1].online, false);
   });
 
-  test('parseStreamHealth extracts codec and fps', () => {
+  test('parseStreamHealth extracts codec from tracks', () => {
     const streams = require('../src/streams');
     const parsed = streams.parseStreamHealth({
-      kiosk1: {
-        producers: [{
-          url: 'vnc://10.0.0.1:5900',
-          medias: ['video, recvonly, H264, 1280x720, 30 fps'],
-        }],
-        consumers: [{}],
+      camera1: {
+        ready: true,
+        tracks: [{ type: 'video', codec: 'H264' }],
       },
     });
     assert.strictEqual(parsed.streams[0].codec, 'H264');
-    assert.strictEqual(parsed.streams[0].fps, 30);
-    assert.strictEqual(parsed.streams[0].producerCount, 1);
-    assert.strictEqual(parsed.streams[0].consumerCount, 1);
+    assert.strictEqual(parsed.streams[0].online, true);
   });
 });
 
