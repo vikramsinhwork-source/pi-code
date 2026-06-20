@@ -9,6 +9,7 @@ const streamFrames = require('./streamFrames');
 const cameraStreamer = require('./cameraStreamer');
 const commands = require('./commands');
 const mediamtxWebrtc = require('./mediamtx-webrtc');
+const hlsProxy = require('./hls-proxy');
 
 let socket = null;
 let heartbeatTimer = null;
@@ -75,6 +76,11 @@ function startIntervals() {
     console.log('[agent][socket] JPEG pipeline disabled (JPEG_PIPELINE_ENABLED=false)');
     console.log('[agent][socket] WebRTC-only mode: no agent ffmpeg RTSP pulls for cameras');
     cameraStreamer.stop();
+    if (config.kioskFrameEnabled) {
+      kioskLoopRunning = true;
+      console.log('[agent][socket] Kiosk frame upload enabled (KIOSK_FRAME_ENABLED=true)');
+      runKioskLoop();
+    }
   }
 }
 
@@ -185,6 +191,7 @@ async function connect() {
   socket = buildSocket();
   commands.attach(socket);
   mediamtxWebrtc.attach(socket);
+  hlsProxy.attach(socket);
 
   socket.on('connect', async () => {
     log('log', 'socket connected');

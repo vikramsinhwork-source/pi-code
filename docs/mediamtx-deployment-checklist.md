@@ -26,16 +26,20 @@ Repo: `railway-monitor`
 - [ ] Copy/update `.env` from `.env.example`
 - [ ] Confirm DB vars: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
 - [ ] Confirm auth secrets: `JWT_SECRET`, `DEVICE_TOKEN_SECRET` (must match Pi agent)
-- [ ] Add MediaMTX playback vars (socket WHEP relay — production default):
+- [ ] Add MediaMTX playback vars (HLS proxy — production default for remote viewing):
 
 ```bash
-PI_WEBRTC_PLAYBACK_MODE=socket
+PI_WEBRTC_PLAYBACK_MODE=hls
+HLS_PROXY_SOCKET_TIMEOUT_MS=15000
+HLS_PROXY_MAX_BODY_BYTES=8388608
 STREAM_TOKEN_TTL_SEC=600
 MEDIAMTX_WEBRTC_SCHEME=http
 MEDIAMTX_WEBRTC_PORT=8889
 ```
 
-- [ ] Deploy backend with `POST /api/mediamtx/auth` localhost bypass (127.0.0.1 for agent WHEP + API)
+Use `PI_WEBRTC_PLAYBACK_MODE=socket` only for **station LAN WebRTC dev** (direct UDP to Pi).
+
+- [ ] Deploy backend with `POST /api/mediamtx/auth` localhost bypass (127.0.0.1 for agent WHEP + HLS + API + runOnDemand ffmpeg publish)
 
 - [ ] Remove unused go2rtc vars if present: `GO2RTC_PORT`, `GO2RTC_HOST`, etc.
 
@@ -138,9 +142,13 @@ Edit `agent/.env` (and root `pi-code/.env` if you use it):
 ```bash
 MEDIAMTX_API_URL=http://127.0.0.1:9997
 MEDIAMTX_WEBRTC_BASE_URL=http://127.0.0.1:8889
-MEDIAMTX_PATHS=camera1,camera2,camera3,camera4,camera5
+MEDIAMTX_HLS_BASE_URL=http://127.0.0.1:8888
+MEDIAMTX_PATHS=camera1,camera2,camera3,camera4,camera5,kiosk1,kiosk2
 PI_PLAYBACK_IP=192.168.1.8
 JPEG_PIPELINE_ENABLED=false
+KIOSK_FRAME_ENABLED=true
+# kiosk1|vnc://10.71.35.210:5900;kiosk2|vnc://10.71.35.211:5900
+KIOSK_VNC_TARGETS=
 ```
 
 - [ ] Install deps and start agent:
@@ -222,13 +230,56 @@ ffmpeg -hide_banner -loglevel error -rtsp_transport tcp \
 
 - [ ] JPEG file created (> 500 bytes)
 
-#### C1.5 HLS fallback (optional)
+#### C1.5 HLS (production remote playback)
 
-```
-http://<pi-ip>:8888/camera1/index.m3u8
+On the Pi (localhost only — agent uses this for backend proxy):
+
+```bash
+curl -s http://127.0.0.1:8888/camera1/index.m3u8 | head
 ```
 
-Test in VLC or browser with HLS support.
+- [ ] Returns `#EXTM3U` manifest (may take 10–20s on first connect — `runOnDemand`)
+
+---
+
+### C3. Backend HLS proxy (production remote)
+
+**Goal:** Confirm backend → socket → agent → localhost HLS works from anywhere.
+
+#### C3.1 POST playback session
+
+```bash
+PI_DEVICE_ID="<uuid>"
+curl -sS -X POST \
+  "https://railwaymonitor.in/api/monitoring/devices/${PI_DEVICE_ID}/streams/camera1/playback" \
+  -H "Authorization: Bearer <TOKEN>" | jq .
+```
+
+- [ ] HTTP 200 with `data.playback_mode: "hls"`, `data.hls_url`
+- [ ] 503 → Pi agent offline
+
+#### C3.2 GET HLS manifest via backend proxy
+
+```bash
+curl -sS \
+  "https://railwaymonitor.in/api/monitoring/devices/${PI_DEVICE_ID}/streams/camera1/hls/index.m3u8?token=<TOKEN>" \
+  | head
+```
+
+- [ ] Returns `#EXTM3U` with segment URLs rewritten to `/api/monitoring/devices/.../hls/...`
+- [ ] 401 without token; 504 → agent HLS fetch timeout
+
+#### C3.3 Kiosk frame upload (optional)
+
+With `KIOSK_FRAME_ENABLED=true` and `KIOSK_VNC_TARGETS` set:
+
+```bash
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  "https://railwaymonitor.in/api/monitoring/devices/${PI_DEVICE_ID}/streams/kiosk1/frame" \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+- [ ] HTTP 200 with JPEG after agent uploads first VNC snapshot
 
 ---
 
@@ -264,7 +315,7 @@ curl -s http://<backend>/api/monitoring/lobby-streams \
 ```
 
 - [ ] Your lobby appears with `streams` array
-- [ ] Each stream has `name: "camera1"`, `online: true/false`, `agentDeviceId` or `pi_device_id`
+- [ ] Each stream has `name`, `stream_type` (`cctv` or `kiosk`), `online`, `pi_device_id`
 - [ ] Note the camera id format: `{piDeviceId}_{streamName}` e.g. `b6ee0d2b-..._camera1`
 
 #### C2.3 Camera registry (new table)
@@ -281,11 +332,13 @@ curl -s http://<backend>/api/cameras \
 
 ---
 
-### C3. Backend WebRTC offer relay (no Flutter yet)
+### C3b. Backend WebRTC offer relay (LAN dev only)
 
-**Goal:** Confirm backend → socket → agent → WHEP signaling works.
+**Goal:** Confirm backend → socket → agent → WHEP signaling works on station LAN.
 
-#### C3.1 POST webrtc/offer
+Skip this section if using `PI_WEBRTC_PLAYBACK_MODE=hls` in production.
+
+#### C3b.1 POST webrtc/offer
 
 ```bash
 PI_DEVICE_ID="<uuid>"
@@ -300,7 +353,7 @@ curl -sS -X POST \
 - [ ] SDP answer contains `H264` (not H265 only)
 - [ ] 503 → Pi agent offline; 502 → WHEP failed on Pi (check mediamtx auth + transcode)
 
-#### C3.2 MediaMTX auth localhost bypass
+#### C3b.2 MediaMTX auth localhost bypass
 
 ```bash
 curl -sS -i -X POST https://railwaymonitor.in/api/mediamtx/auth \
@@ -310,7 +363,15 @@ curl -sS -i -X POST https://railwaymonitor.in/api/mediamtx/auth \
 
 - [ ] HTTP 200 (agent WHEP allowed without stream_token)
 
-#### C3.3 Direct Pi browser test (optional)
+```bash
+curl -sS -i -X POST https://railwaymonitor.in/api/mediamtx/auth \
+  -H "Content-Type: application/json" \
+  -d '{"ip":"127.0.0.1","action":"publish","protocol":"rtsp","path":"camera1"}'
+```
+
+- [ ] HTTP 200 (runOnDemand ffmpeg can publish to localhost RTSP)
+
+#### C3b.3 Direct Pi browser test (optional)
 
 ```
 http://<pi-lan-ip>:8889/camera1/
@@ -320,35 +381,44 @@ http://<pi-lan-ip>:8889/camera1/
 
 ---
 
-### C4. Flutter / full end-to-end
+### C4. Flutter app (remote from home internet)
 
-**Goal:** Confirm the monitoring app plays via flutter_webrtc offer relay.
+**Goal:** Confirm the monitoring app plays cameras via backend HLS proxy and kiosks via frame polling.
 
 - [ ] Build/run Flutter app (`backendBaseUrl` → production)
 - [ ] Login as **MONITOR** with division access
-- [ ] Open CCTV grid — cameras show online (not stuck offline from API 401)
-- [ ] Video plays in tile; fullscreen works
-- [ ] No `Failed to parse SessionDescription` (H264 transcode + clean webrtcAdditionalHosts)
+- [ ] Open CCTV grid — cameras and kiosks show in lobby streams
+- [ ] Camera video plays via HLS (10–20s first segment cold-start is normal)
+- [ ] Kiosk tiles refresh JPEG frames every ~700ms
+- [ ] Network tab shows requests only to `railwaymonitor.in` (no direct Pi IP)
 
 **If tile shows error:**
 
 | Symptom | Check |
 |---------|-------|
-| 502 on offer | C3.1; Pi agent logs for WHEP 401 |
-| SDP parse error | H264 in answer (`diagnose.js --whep`); remove hostname from webrtcAdditionalHosts |
+| 401 on HLS | Monitor JWT / `?token=` on web |
+| 504 on HLS | C3.2; Pi agent logs for HLS fetch |
+| Kiosk blank | C3.3; `KIOSK_FRAME_ENABLED` + VNC targets |
 | Offline cameras | C1.1 API; stream poll 401 → backend localhost auth bypass |
-| Black screen after connect | ICE / firewall / PI_PLAYBACK_IP mismatch |
+
+For **LAN WebRTC dev** (`PI_WEBRTC_PLAYBACK_MODE=socket`): use C3b and expect ICE to Pi LAN IP only.
 
 ---
 
-## Part D — Optional edge proxy (skip if monitors reach Pi IPs on LAN/VPN)
+## Part D — Optional modes (skip for standard remote rollout)
 
-Only if remote monitors cannot reach Pi `:8889` directly:
+| Mode | When to use |
+|------|-------------|
+| `hls` (default prod) | Remote monitors from home/internet |
+| `socket` | Station LAN WebRTC dev/testing |
+| `edge` | Public HTTPS proxy to Pi `:8889` (legacy alternative to HLS) |
+
+Only if using edge mode instead of HLS:
 
 - [ ] TLS cert for public hostname
 - [ ] Reverse proxy to Pi `:8889`
 - [ ] Set `PI_WEBRTC_PLAYBACK_MODE=edge` and `EDGE_WEBRTC_BASE_URL`
-- [ ] Re-run C3.1 and C4
+- [ ] Re-run C3b and C4
 
 ---
 
@@ -356,9 +426,10 @@ Only if remote monitors cannot reach Pi `:8889` directly:
 
 1. [ ] **camera1 only** — configure one path in `mediamtx.yml`, set `MEDIAMTX_PATHS=camera1`, test C1→C4
 2. [ ] Add camera2–5 once camera1 is stable
-3. [ ] Disable go2rtc on all Pis
-4. [ ] (Optional) Deploy edge proxy only if needed for internet monitors
-5. [ ] Deploy Flutter build to monitors
+3. [ ] Enable kiosk frames (`KIOSK_FRAME_ENABLED`, VNC targets) if needed
+4. [ ] Disable go2rtc on all Pis
+5. [ ] Set backend `PI_WEBRTC_PLAYBACK_MODE=hls`
+6. [ ] Deploy Flutter build to monitors
 
 ---
 
@@ -381,9 +452,12 @@ Only if remote monitors cannot reach Pi `:8889` directly:
 |------|--------|------|------|
 | Login | POST | `/api/auth/login` | Public |
 | Lobby cameras | GET | `/api/monitoring/lobby-streams` | Monitor JWT |
+| HLS playback | GET | `/api/monitoring/devices/{piId}/streams/camera1/hls/index.m3u8` | Monitor JWT or `?token=` |
+| Playback session | POST | `/api/monitoring/devices/{piId}/streams/camera1/playback` | Monitor JWT |
+| Kiosk frame | GET | `/api/monitoring/devices/{piId}/streams/kiosk1/frame` | Monitor JWT |
 | Camera list | GET | `/api/cameras` | Monitor JWT |
-| Play URL (deprecated) | GET | `/api/cameras/{id}/webrtc-url` | Monitor JWT (410 in socket mode) |
-| WebRTC offer | POST | `/api/monitoring/devices/{piId}/streams/camera1/webrtc/offer` | Monitor JWT |
+| Play URL (deprecated) | GET | `/api/cameras/{id}/webrtc-url` | Monitor JWT (410 in hls mode) |
+| WebRTC offer (LAN dev) | POST | `/api/monitoring/devices/{piId}/streams/camera1/webrtc/offer` | Monitor JWT |
 | MediaMTX auth | POST | `/api/mediamtx/auth` | MediaMTX (localhost bypass for agent) |
 | Pi register | POST | `/api/monitoring/devices/register` | Device JWT |
 | Pi health | POST | `/api/monitoring/devices/stream-status` | Device JWT |

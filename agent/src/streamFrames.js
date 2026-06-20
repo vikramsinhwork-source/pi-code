@@ -107,7 +107,14 @@ async function uploadFramesForStreams(streams = [], { vncOnly = false, rtspOnly 
   if (!config.deviceId || !streams.length) return;
 
   let list = normalizeStreams(streams);
-  if (vncOnly) list = list.filter((s) => isVncSource(s.source));
+  if (vncOnly) {
+    list = list
+      .map((s) => ({
+        ...s,
+        source: s.source || config.kioskVncTargets[s.name] || null,
+      }))
+      .filter((s) => isVncSource(s.source));
+  }
   if (rtspOnly) list = list.filter((s) => !isVncSource(s.source));
   if (!list.length) return;
 
