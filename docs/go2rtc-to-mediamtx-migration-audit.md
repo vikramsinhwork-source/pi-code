@@ -3,20 +3,20 @@
 **Document version:** 1.0  
 **Date:** 2026-06-20  
 **Scope:** `pi-code`, `railway-monitor`, `remote_monitoring_system`  
-**Status:** Implementation complete (pending production rollout and edge proxy deployment)
+**Status:** Implementation complete (direct Pi IP playback default; edge optional)
 
 ---
 
 ## 1. Executive summary
 
-This migration replaces **go2rtc** (port 1984, custom WHEP + Socket.IO SDP relay) with **MediaMTX** on each Raspberry Pi. The Flutter client no longer runs a custom `flutter_webrtc` signaling stack for CCTV; it loads a backend-issued MediaMTX WebRTC page URL in a WebView.
+This migration replaces **go2rtc** (port 1984, custom WHEP + Socket.IO SDP relay) with **MediaMTX** on each Raspberry Pi. Playback uses **direct Pi LAN URLs** (`http://{pi_ip}:8889/{path}/`), matching the old go2rtc `pi_ip` model. Flutter loads the backend-issued URL in a WebView.
 
 | Area | Before | After |
 |------|--------|-------|
 | Pi media gateway | go2rtc `:1984` | MediaMTX `:9997` API, `:8554` RTSP, `:8888` HLS, `:8889` WebRTC |
-| Signaling | Backend + Pi relay SDP/ICE | None (browser ↔ MediaMTX via edge URL) |
+| Signaling | Backend + Pi relay SDP/ICE | None (browser ↔ MediaMTX on Pi LAN IP) |
 | Camera discovery | `lobby-streams` + go2rtc stream names | Same endpoint; paths are MediaMTX path names |
-| Playback URL | Client-built WHEP or socket offer | `GET /api/cameras/:id/webrtc-url` |
+| Playback URL | Client-built WHEP using `pi_ip` | `GET /api/cameras/:id/webrtc-url` → `http://{pi_ip}:8889/{path}` |
 | Pi agent role | Poll go2rtc, proxy WebRTC | Register paths, poll MediaMTX health, JPEG frames via local RTSP |
 | DB camera mapping | Implicit (`devices.go2rtc_status`) | Explicit `stream_cameras` table |
 
@@ -81,12 +81,11 @@ sequenceDiagram
   Backend-->>Client: cameras (id = piUuid_camera1)
 
   Client->>Backend: GET /api/cameras/:id/webrtc-url
-  Backend-->>Client: { url, token?, expiresAt? }
-
-  Client->>Edge: WebView loads url
-  Edge->>MTX: reverse proxy WebRTC page
-  MTX-->>Client: native MediaMTX browser player
+  Backend-->>Client: http://192.168.x.x:8889/camera1/
+  Client->>Pi: WebView loads URL (WebRTC + TURN from mediamtx.yml)
 ```
+
+**Note:** Edge proxy (`edge.railwatch.in`) is optional; default is direct Pi IP (go2rtc-style).
 
 ### 2.3 Component responsibilities (after)
 
@@ -95,7 +94,7 @@ sequenceDiagram
 | **MediaMTX (Pi)** | RTSP ingest, HLS/WebRTC egress, path health API |
 | **Pi agent** | Register paths, heartbeat, stream health polling, optional JPEG upload, remote commands |
 | **railway-monitor** | Camera registry, RBAC, edge URL issuance, lobby discovery |
-| **Edge proxy** (`edge.railwatch.in`) | TLS termination, optional JWT validation, proxy to Pi `:8889` |
+| **Edge proxy** (`edge.railwatch.in`) | Optional — only if monitors cannot reach Pi IPs; default is direct LAN URL |
 | **Flutter** | Discover cameras, fetch play URL, render WebView |
 
 ---
@@ -123,9 +122,9 @@ sequenceDiagram
    - Backend resolves camera (UUID or legacy `{piUuid}_{path}`), checks RBAC, returns:
      ```json
      {
-       "url": "https://edge.railwatch.in/webrtc/camera1",
-       "token": "<optional JWT>",
-       "expiresAt": "2026-06-21T10:00:00Z"
+       "url": "http://192.168.1.10:8889/camera1",
+       "token": null,
+       "camera": { "piIp": "192.168.1.10", "mediamtxPath": "camera1" }
      }
      ```
    - `MediaMtxStreamView` loads URL in `WebViewWidget` (appends `token` query param when present)
@@ -359,9 +358,12 @@ Removed paths:
 | `GO2RTC_SOCKET_TIMEOUT_MS` | set | **Unused** | — |
 | `GO2RTC_FETCH_TIMEOUT_MS` | set | **Unused** | — |
 | `GO2RTC_HOST` | optional | **Unused** | — |
-| `EDGE_WEBRTC_BASE_URL` | — | **New** | `https://edge.railwatch.in/webrtc` |
-| `EDGE_WEBRTC_JWT_SECRET` | — | **New** (optional) | falls back to `JWT_SECRET` |
-| `EDGE_WEBRTC_TOKEN_TTL_SEC` | — | **New** (optional) | `3600` |
+| `PI_WEBRTC_PLAYBACK_MODE` | — | **New** (default `direct`) | Per-Pi IP URLs |
+| `MEDIAMTX_WEBRTC_SCHEME` | — | **New** | `http` |
+| `MEDIAMTX_WEBRTC_PORT` | — | **New** | `8889` |
+| `EDGE_WEBRTC_BASE_URL` | — | Optional | Only when `PI_WEBRTC_PLAYBACK_MODE=edge` |
+| `EDGE_WEBRTC_JWT_SECRET` | — | Optional | Edge mode token signing |
+| `EDGE_WEBRTC_TOKEN_TTL_SEC` | — | Optional | `3600` |
 | `TURN_USERNAME` / `TURN_PASSWORD` | used | **Still used** | ICE for kiosk calls + MediaMTX config |
 
 ### 5.3 remote_monitoring_system
@@ -399,8 +401,9 @@ Set in `/etc/mediamtx/mediamtx.yml` (from `docs/mediamtx.example.yml`):
 | 9997 | MediaMTX API | Pi localhost only |
 | 3478 | TURN | Public (existing) |
 
-**Edge proxy (external, not in repo):**  
-`https://edge.railwatch.in/webrtc/{path}` → `http://{pi-ip}:8889/{path}/`
+**Default playback (direct):** `http://{devices.ip_address}:8889/{path}/` — same network model as go2rtc `:1984`.
+
+**Optional edge:** `https://edge.railwatch.in/webrtc/{path}` → Pi `:8889` when `PI_WEBRTC_PLAYBACK_MODE=edge`.
 
 ---
 
@@ -504,17 +507,16 @@ Set in `/etc/mediamtx/mediamtx.yml` (from `docs/mediamtx.example.yml`):
 
 ### Backend
 
-- [ ] Set `EDGE_WEBRTC_BASE_URL` in production `.env`
-- [ ] Optionally set `EDGE_WEBRTC_JWT_SECRET` for signed edge tokens
+- [ ] Set `PI_WEBRTC_PLAYBACK_MODE=direct` (default) — no edge required on private LAN
+- [ ] Confirm each Pi has `ip_address` in DB after agent online
 - [ ] Run DB migration `20260620140000-stream-cameras.cjs`
 - [ ] Deploy updated railway-monitor
 - [ ] Smoke test: `/mediamtx-test`, `/api/cameras/:id/webrtc-url`
 
-### Edge
+### Edge (optional — skip for private LAN)
 
-- [ ] Configure TLS + reverse proxy: `/webrtc/{path}` → Pi `:8889/{path}/`
+- [ ] Only if internet monitors without VPN: TLS proxy + `PI_WEBRTC_PLAYBACK_MODE=edge`
 - [ ] Optional JWT validation using `EDGE_WEBRTC_JWT_SECRET`
-- [ ] Route per-Pi or per-lobby based on camera registry / DNS
 
 ### Flutter client
 

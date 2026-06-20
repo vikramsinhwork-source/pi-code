@@ -1,12 +1,14 @@
 const { io } = require('socket.io-client');
 const os = require('os');
 const config = require('./config');
+const { getPlaybackIp } = require('./network');
 const auth = require('./auth');
 const heartbeat = require('./heartbeat');
 const streams = require('./streams');
 const streamFrames = require('./streamFrames');
 const cameraStreamer = require('./cameraStreamer');
 const commands = require('./commands');
+const mediamtxWebrtc = require('./mediamtx-webrtc');
 
 let socket = null;
 let heartbeatTimer = null;
@@ -17,27 +19,6 @@ let kioskLoopRunning = false;
 let reconnectTimer = null;
 let intentionalDisconnect = false;
 let staleDetectorTimer = null;
-
-// #region agent log
-function debugLog(hypothesisId, location, message, data = {}, runId = 'run1') {
-  fetch('http://127.0.0.1:7515/ingest/ab84a119-a91c-4713-881e-a8c644fb3969', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Debug-Session-Id': '2b0af4',
-    },
-    body: JSON.stringify({
-      sessionId: '2b0af4',
-      runId,
-      hypothesisId,
-      location,
-      message,
-      data,
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-}
-// #endregion
 
 function buildSocket() {
   return io(config.socketUrl, {
@@ -53,7 +34,7 @@ async function registerOnline() {
     hostname: os.hostname(),
     serialNumber: config.deviceId,
     agentVersion: config.agentVersion,
-    ipAddress: getLocalIp(),
+    ipAddress: getPlaybackIp(),
     stationCode: config.stationCode,
     capabilities: { mediamtx: true, screenshot: true, update: true },
     mediamtxPaths: config.mediamtxPaths,
@@ -66,18 +47,6 @@ async function registerOnline() {
   } catch (err) {
     console.warn('[agent] REST register fallback failed:', err.message);
   }
-}
-
-function getLocalIp() {
-  const interfaces = os.networkInterfaces();
-  for (const entries of Object.values(interfaces)) {
-    for (const entry of entries || []) {
-      if (entry.family === 'IPv4' && !entry.internal) {
-        return entry.address;
-      }
-    }
-  }
-  return null;
 }
 
 const STALE_CAMERA_THRESHOLD_MS = 30000;
@@ -119,22 +88,9 @@ async function refreshCameraStreamers() {
     const cameras = parsed.streams
       .filter((s) => s.source && !/^vnc:\/\//i.test(s.source))
       .map((s) => ({ name: s.name, source: s.source }));
-    // #region agent log
-    debugLog('H5', 'socket.js:refreshCameraStreamers', 'Refreshed camera decoder set', {
-      parsedTotal: parsed.summary.total,
-      candidateCameraCount: cameras.length,
-      cameraNames: cameras.map((c) => c.name),
-      vncOnlyNames: parsed.streams.filter((s) => /^vnc:\/\//i.test(String(s.source || ''))).map((s) => s.name),
-    });
-    // #endregion
     await cameraStreamer.start(cameras);
   } catch (err) {
     log('warn', 'Camera streamer refresh failed', err.message);
-    // #region agent log
-    debugLog('H5', 'socket.js:refreshCameraStreamers:catch', 'Camera streamer refresh failed', {
-      error: err.message,
-    });
-    // #endregion
   }
 }
 
@@ -228,6 +184,7 @@ async function connect() {
 
   socket = buildSocket();
   commands.attach(socket);
+  mediamtxWebrtc.attach(socket);
 
   socket.on('connect', async () => {
     log('log', 'socket connected');

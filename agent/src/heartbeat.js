@@ -2,6 +2,7 @@ const os = require('os');
 const axios = require('axios');
 const config = require('./config');
 const auth = require('./auth');
+const { getPlaybackIp } = require('./network');
 
 async function registerViaRest(payload) {
   const token = await auth.ensureToken();
@@ -57,18 +58,8 @@ function collectMetrics() {
     memory,
     uptime: os.uptime(),
     hostname: os.hostname(),
-    ipAddress: getLocalIp(),
+    ipAddress: getPlaybackIp(),
   };
-}
-
-function getLocalIp() {
-  const interfaces = os.networkInterfaces();
-  for (const entries of Object.values(interfaces)) {
-    for (const entry of entries || []) {
-      if (entry.family === 'IPv4' && !entry.internal) return entry.address;
-    }
-  }
-  return null;
 }
 
 module.exports = { send, registerViaRest, collectMetrics };

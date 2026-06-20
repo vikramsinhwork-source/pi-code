@@ -22,9 +22,26 @@ hlsAddress: :8888
 webrtc: yes
 webrtcAddress: :8889
 
+# LAN IP(s) monitors use for direct WebRTC after backend-issued stream_token.
 webrtcAdditionalHosts:
-  - 192.168.1.10
+  - 192.168.1.8
   - railwatch-pi.local
+
+# External auth for browser playback (stream_token from POST .../webrtc/offer).
+authMethod: http
+authHTTPAddress: https://railwaymonitor.in/api/mediamtx/auth
+
+# Agent localhost WHEP relay (signaling) — no cloud token required.
+authInternalUsers:
+  - user: any
+    ips: ["127.0.0.1", "::1"]
+    permissions:
+      - action: read
+      - action: playback
+
+webrtcAllowOrigins:
+  - "https://railwaymonitor.in"
+  - "http://localhost:*"
 
 webrtcICEServers2:
   - url: turn:turn.railwaymonitor.in:3478
