@@ -26,19 +26,16 @@ Repo: `railway-monitor`
 - [ ] Copy/update `.env` from `.env.example`
 - [ ] Confirm DB vars: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
 - [ ] Confirm auth secrets: `JWT_SECRET`, `DEVICE_TOKEN_SECRET` (must match Pi agent)
-- [ ] Add MediaMTX playback vars (direct Pi IP — default, go2rtc-style):
+- [ ] Add MediaMTX playback vars (socket WHEP relay — production default):
 
 ```bash
-# Default: build play URL from each Pi devices.ip_address
-PI_WEBRTC_PLAYBACK_MODE=direct
+PI_WEBRTC_PLAYBACK_MODE=socket
+STREAM_TOKEN_TTL_SEC=600
 MEDIAMTX_WEBRTC_SCHEME=http
 MEDIAMTX_WEBRTC_PORT=8889
-
-# Optional edge mode only if monitors cannot reach Pi IPs (PI_WEBRTC_PLAYBACK_MODE=edge)
-# EDGE_WEBRTC_BASE_URL=https://edge.railwatch.in/webrtc
-# EDGE_WEBRTC_JWT_SECRET=
-# EDGE_WEBRTC_TOKEN_TTL_SEC=3600
 ```
+
+- [ ] Deploy backend with `POST /api/mediamtx/auth` localhost bypass (127.0.0.1 for agent WHEP + API)
 
 - [ ] Remove unused go2rtc vars if present: `GO2RTC_PORT`, `GO2RTC_HOST`, etc.
 
@@ -109,10 +106,12 @@ chmod +x agent/scripts/install-mediamtx.sh
 
 ### B2. Configure MediaMTX
 
-Edit `/etc/mediamtx/mediamtx.yml`:
+Edit `/etc/mediamtx/mediamtx.yml` (copy from `docs/mediamtx.example.yml`):
 
-- [ ] Set correct **RTSP source URLs** for `camera1`–`camera5` (NVR IP, credentials, channel)
-- [ ] Set `webrtcAdditionalHosts` to Pi's **LAN IP** and any DNS name browsers use
+- [ ] Set correct **RTSP URLs** inside each camera's `runOnDemand` ffmpeg command (NVR IP, credentials, channel)
+- [ ] Set `PI_PLAYBACK_IP` in `agent/.env`, then run `sudo agent/scripts/sync-mediamtx-playback-ip.sh`
+- [ ] Confirm `authMethod: http` and `authHTTPAddress: https://railwaymonitor.in/api/mediamtx/auth`
+- [ ] **Do not** use `authInternalUsers` with `authMethod: http` (ignored by MediaMTX)
 - [ ] Set TURN credentials under `webrtcICEServers2` (match backend `.env` TURN vars)
 - [ ] Restart after edits:
 
@@ -140,6 +139,7 @@ Edit `agent/.env` (and root `pi-code/.env` if you use it):
 MEDIAMTX_API_URL=http://127.0.0.1:9997
 MEDIAMTX_WEBRTC_BASE_URL=http://127.0.0.1:8889
 MEDIAMTX_PATHS=camera1,camera2,camera3,camera4,camera5
+PI_PLAYBACK_IP=192.168.1.8
 JPEG_PIPELINE_ENABLED=false
 ```
 
@@ -194,10 +194,11 @@ curl -s http://127.0.0.1:9997/v2/paths/list | jq .
 
 ```bash
 cd pi-code/agent
-node scripts/mediamtx-diagnose.js camera1
+node scripts/mediamtx-diagnose.js camera1 --whep
 ```
 
-- [ ] Prints path list and browser URL: `http://127.0.0.1:8889/camera1/`
+- [ ] Prints path list; WHEP answer contains **H264** (not H265)
+- [ ] Browser URL: `http://127.0.0.1:8889/camera1/`
 
 #### C1.3 Browser on Pi (or same LAN)
 
@@ -280,87 +281,63 @@ curl -s http://<backend>/api/cameras \
 
 ---
 
-### C3. Backend play URL (no Flutter yet)
+### C3. Backend WebRTC offer relay (no Flutter yet)
 
-**Goal:** Confirm backend issues the correct WebRTC page URL.
+**Goal:** Confirm backend → socket → agent → WHEP signaling works.
 
-#### C3.1 Get webrtc-url
+#### C3.1 POST webrtc/offer
 
 ```bash
-CAMERA_ID="<piDeviceId>_camera1"
-
-curl -s "http://<backend>/api/cameras/${CAMERA_ID}/webrtc-url" \
-  -H "Authorization: Bearer <TOKEN>" | jq .
+PI_DEVICE_ID="<uuid>"
+curl -sS -X POST \
+  "https://railwaymonitor.in/api/monitoring/devices/${PI_DEVICE_ID}/streams/camera1/webrtc/offer" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"offer","sdp":"v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n"}' | jq .
 ```
 
-Expected response shape:
+- [ ] HTTP 200 with `data.sdp`, `data.stream_token`, `data.ice_servers`
+- [ ] SDP answer contains `H264` (not H265 only)
+- [ ] 503 → Pi agent offline; 502 → WHEP failed on Pi (check mediamtx auth + transcode)
 
-```json
-{
-  "success": true,
-  "data": {
-    "url": "http://192.168.1.10:8889/camera1",
-    "token": null,
-    "camera": { "mediamtxPath": "camera1", "piIp": "192.168.1.10" }
-    "token": null,
-    "expiresAt": null,
-    "camera": {
-      "legacyId": "<piDeviceId>_camera1",
-      "mediamtxPath": "camera1"
-    }
-  }
-}
+#### C3.2 MediaMTX auth localhost bypass
+
+```bash
+curl -sS -i -X POST https://railwaymonitor.in/api/mediamtx/auth \
+  -H "Content-Type: application/json" \
+  -d '{"ip":"127.0.0.1","action":"read","protocol":"webrtc","path":"camera1"}'
 ```
 
-- [ ] HTTP 200
-- [ ] `url` uses the Pi’s registered `ip_address` (e.g. `http://192.168.x.x:8889/camera1`)
-- [ ] 404 with “Pi IP address not registered” → agent not reporting IP; check device status
-- [ ] 403 → monitor lacks division access
+- [ ] HTTP 200 (agent WHEP allowed without stream_token)
 
-#### C3.2 Backend test page
-
-Open in browser:
+#### C3.3 Direct Pi browser test (optional)
 
 ```
-http://<backend>/mediamtx-test
+http://<pi-lan-ip>:8889/camera1/
 ```
 
-- [ ] Enter Pi IP + path, click Load — or use URL from C3.1
-
-> **Direct mode (default):** Backend builds URL from `devices.ip_address`. No edge proxy required on private LAN.
-
-#### C3.3 Open returned URL directly
-
-Copy `url` from C3.1 into a browser (append `/` if missing):
-
-```
-http://<pi-ip>:8889/camera1/
-```
-
-- [ ] Video plays in browser
+- [ ] Video plays after 5–15s (ffmpeg runOnDemand startup)
 
 ---
 
 ### C4. Flutter / full end-to-end
 
-**Goal:** Confirm the monitoring app loads streams via WebView.
+**Goal:** Confirm the monitoring app plays via flutter_webrtc offer relay.
 
-- [ ] Build/run Flutter app pointed at same backend (`lib/res/app_constants.dart` → `backendBaseUrl`)
-- [ ] Login as **MONITOR** user with access to the Pi's lobby/division
-- [ ] Open CCTV / monitoring overview screen
-- [ ] Pi cameras show in grid (label like `Lobby · camera1`)
-- [ ] Tap/expand camera — WebView loads, video appears
-- [ ] Fullscreen works
+- [ ] Build/run Flutter app (`backendBaseUrl` → production)
+- [ ] Login as **MONITOR** with division access
+- [ ] Open CCTV grid — cameras show online (not stuck offline from API 401)
+- [ ] Video plays in tile; fullscreen works
+- [ ] No `Failed to parse SessionDescription` (H264 transcode + clean webrtcAdditionalHosts)
 
 **If tile shows error:**
 
 | Symptom | Check |
 |---------|-------|
-| No cameras in grid | C2.2 lobby-streams |
-| "Auth token required" | User logged in? |
-| "Empty stream URL" / 404 | C3.1 webrtc-url, C2.3 camera registry |
-| WebView blank, URL works in browser | CORS/edge; WebView permissions on mobile |
-| Offline label | C1.1 path not ready; RTSP source wrong |
+| 502 on offer | C3.1; Pi agent logs for WHEP 401 |
+| SDP parse error | H264 in answer (`diagnose.js --whep`); remove hostname from webrtcAdditionalHosts |
+| Offline cameras | C1.1 API; stream poll 401 → backend localhost auth bypass |
+| Black screen after connect | ICE / firewall / PI_PLAYBACK_IP mismatch |
 
 ---
 
@@ -405,7 +382,9 @@ Only if remote monitors cannot reach Pi `:8889` directly:
 | Login | POST | `/api/auth/login` | Public |
 | Lobby cameras | GET | `/api/monitoring/lobby-streams` | Monitor JWT |
 | Camera list | GET | `/api/cameras` | Monitor JWT |
-| Play URL | GET | `/api/cameras/{piUuid}_camera1/webrtc-url` | Monitor JWT |
+| Play URL (deprecated) | GET | `/api/cameras/{id}/webrtc-url` | Monitor JWT (410 in socket mode) |
+| WebRTC offer | POST | `/api/monitoring/devices/{piId}/streams/camera1/webrtc/offer` | Monitor JWT |
+| MediaMTX auth | POST | `/api/mediamtx/auth` | MediaMTX (localhost bypass for agent) |
 | Pi register | POST | `/api/monitoring/devices/register` | Device JWT |
 | Pi health | POST | `/api/monitoring/devices/stream-status` | Device JWT |
 | Restart MediaMTX | POST | `/api/monitoring/devices/{id}/restart-mediamtx` | Monitor JWT |

@@ -5,7 +5,9 @@
 # Local WebRTC test: http://127.0.0.1:8889/camera1/
 # API health:        curl -s http://127.0.0.1:9997/v3/paths/list | jq .
 #
-# Set webrtcAdditionalHosts to the Pi LAN IP and any edge DNS names clients use.
+# After editing PI_PLAYBACK_IP in agent/.env, run:
+#   agent/scripts/sync-mediamtx-playback-ip.sh
+#
 # RTSP credentials and NVR IP should match your Dahua/RailNet deployment.
 
 logLevel: info
@@ -22,22 +24,15 @@ hlsAddress: :8888
 webrtc: yes
 webrtcAddress: :8889
 
-# LAN IP(s) monitors use for direct WebRTC after backend-issued stream_token.
+# Single LAN IP monitors use for WebRTC ICE (must match PI_PLAYBACK_IP on this Pi).
 webrtcAdditionalHosts:
   - 192.168.1.8
-  - railwatch-pi.local
 
-# External auth for browser playback (stream_token from POST .../webrtc/offer).
+# Browser LAN playback: stream_token validated by backend.
+# Agent localhost WHEP + API poll: allowed via backend /api/mediamtx/auth IP bypass (127.0.0.1).
+# authInternalUsers is NOT used when authMethod is http.
 authMethod: http
 authHTTPAddress: https://railwaymonitor.in/api/mediamtx/auth
-
-# Agent localhost WHEP relay (signaling) — no cloud token required.
-authInternalUsers:
-  - user: any
-    ips: ["127.0.0.1", "::1"]
-    permissions:
-      - action: read
-      - action: playback
 
 webrtcAllowOrigins:
   - "https://railwaymonitor.in"
@@ -49,27 +44,58 @@ webrtcICEServers2:
     password: turnpassword
     clientOnly: true
 
+# ffmpeg runOnDemand: pull NVR RTSP, publish H264 for browser WebRTC (on-demand when viewer connects).
 paths:
   camera1:
-    source: rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=1&subtype=1
-    sourceOnDemand: yes
-    sourceProtocol: tcp
+    runOnDemand: >
+      ffmpeg -hide_banner -loglevel error -rtsp_transport tcp
+      -i rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=1&subtype=1
+      -c:v libx264 -preset ultrafast -tune zerolatency -profile:v baseline -level 3.1
+      -pix_fmt yuv420p -g 30 -keyint_min 30 -sc_threshold 0 -an
+      -f rtsp rtsp://127.0.0.1:$RTSP_PORT/$MTX_PATH
+    runOnDemandRestart: yes
+    runOnDemandStartTimeout: 25s
+    runOnDemandCloseAfter: 15s
   camera2:
-    source: rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=2&subtype=1
-    sourceOnDemand: yes
-    sourceProtocol: tcp
+    runOnDemand: >
+      ffmpeg -hide_banner -loglevel error -rtsp_transport tcp
+      -i rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=2&subtype=1
+      -c:v libx264 -preset ultrafast -tune zerolatency -profile:v baseline -level 3.1
+      -pix_fmt yuv420p -g 30 -keyint_min 30 -sc_threshold 0 -an
+      -f rtsp rtsp://127.0.0.1:$RTSP_PORT/$MTX_PATH
+    runOnDemandRestart: yes
+    runOnDemandStartTimeout: 25s
+    runOnDemandCloseAfter: 15s
   camera3:
-    source: rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=3&subtype=1
-    sourceOnDemand: yes
-    sourceProtocol: tcp
+    runOnDemand: >
+      ffmpeg -hide_banner -loglevel error -rtsp_transport tcp
+      -i rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=3&subtype=1
+      -c:v libx264 -preset ultrafast -tune zerolatency -profile:v baseline -level 3.1
+      -pix_fmt yuv420p -g 30 -keyint_min 30 -sc_threshold 0 -an
+      -f rtsp rtsp://127.0.0.1:$RTSP_PORT/$MTX_PATH
+    runOnDemandRestart: yes
+    runOnDemandStartTimeout: 25s
+    runOnDemandCloseAfter: 15s
   camera4:
-    source: rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=4&subtype=1
-    sourceOnDemand: yes
-    sourceProtocol: tcp
+    runOnDemand: >
+      ffmpeg -hide_banner -loglevel error -rtsp_transport tcp
+      -i rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=4&subtype=1
+      -c:v libx264 -preset ultrafast -tune zerolatency -profile:v baseline -level 3.1
+      -pix_fmt yuv420p -g 30 -keyint_min 30 -sc_threshold 0 -an
+      -f rtsp rtsp://127.0.0.1:$RTSP_PORT/$MTX_PATH
+    runOnDemandRestart: yes
+    runOnDemandStartTimeout: 25s
+    runOnDemandCloseAfter: 15s
   camera5:
-    source: rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=5&subtype=1
-    sourceOnDemand: yes
-    sourceProtocol: tcp
+    runOnDemand: >
+      ffmpeg -hide_banner -loglevel error -rtsp_transport tcp
+      -i rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=5&subtype=1
+      -c:v libx264 -preset ultrafast -tune zerolatency -profile:v baseline -level 3.1
+      -pix_fmt yuv420p -g 30 -keyint_min 30 -sc_threshold 0 -an
+      -f rtsp rtsp://127.0.0.1:$RTSP_PORT/$MTX_PATH
+    runOnDemandRestart: yes
+    runOnDemandStartTimeout: 25s
+    runOnDemandCloseAfter: 15s
   kiosk1:
     sourceOnDemand: no
   kiosk2:
