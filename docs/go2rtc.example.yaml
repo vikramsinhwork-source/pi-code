@@ -1,11 +1,21 @@
-# RailWatch Pi — copy to ~/go2rtc.yaml (ready to use, no edits needed)
+# RailWatch Pi — copy to ~/go2rtc.yaml
 #   cp docs/go2rtc.example.yaml ~/go2rtc.yaml
 #   sudo systemctl restart go2rtc
 #
 # Rollback: cp ~/go2rtc.yaml.bak ~/go2rtc.yaml && sudo systemctl restart go2rtc
 #
-# Verify: curl -s http://127.0.0.1:1984/api/streams | jq .
-# Compare: http://127.0.0.1:1984 → Streams → WebRTC preview vs /webrtc-test
+# go2rtc version: preload requires >= 1.9.11; multi-tab hang fixes >= 1.9.9
+#   go2rtc -version
+#   Upgrade: https://github.com/AlexxIT/go2rtc/releases (arm64 binary for Pi)
+#
+# Verify preload (producers should exist before opening stream.html):
+#   curl -s http://127.0.0.1:1984/api/streams | jq '.camera1.producers'
+#
+# WebRTC test: http://127.0.0.1:1984/stream.html?src=camera1&mode=webrtc
+# Diagnose: node agent/scripts/webrtc-diagnose.js camera1 --concurrent 3
+#
+# If streams hang after failed tabs: curl http://127.0.0.1:1984/api/stacks
+# Agent JPEG pipeline must be off for WebRTC testing: JPEG_PIPELINE_ENABLED=false
 
 api:
   listen: ":1984"
@@ -21,9 +31,18 @@ webrtc:
       username: turnuser
       credential: turnpassword
 
+# Preload keeps RTSP producers warm at boot — fixes first stream.html open delay.
+# Do not preload kiosk VNC streams (always-on would waste resources).
+preload:
+  camera1: "video"
+  camera2: "video"
+  camera3: "video"
+  camera4: "video"
+  camera5: "video"
+
 ffmpeg:
   global: "-hide_banner -loglevel warning"
-  timeout: 10
+  timeout: 30
   h264: >-
     -codec:v libx264
     -pix_fmt:v yuv420p
@@ -54,6 +73,10 @@ streams:
   kiosk2:
     - vnc://10.71.35.211:5900
 
+  # Faster cold start if substream is already H264 (test one camera at a time):
+  # camera1:
+  #   - rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=1&subtype=1
+  #
   # If decode still stuck: try main stream on one camera (subtype=0):
   # camera1:
   #   - ffmpeg:rtsp://admin2:admin123@192.168.1.3:554/cam/realmonitor?channel=1&subtype=0#video=h264

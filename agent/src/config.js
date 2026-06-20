@@ -23,7 +23,11 @@ module.exports = {
   cameraUploadIntervalMs: Number(process.env.CAMERA_UPLOAD_INTERVAL_MS || 350),
   go2rtcUrl: (process.env.GO2RTC_URL || 'http://127.0.0.1:1984').replace(/\/$/, ''),
   go2rtcStreamsPath: process.env.GO2RTC_STREAMS_PATH || '/api/streams',
-  /** Set JPEG_PIPELINE_ENABLED=false on Pi for WebRTC-only testing (no ffmpeg JPEG upload). */
+  /**
+   * Persistent ffmpeg JPEG decoders per camera (uploads frames to backend).
+   * Set JPEG_PIPELINE_ENABLED=false for WebRTC-only Pi (no extra RTSP pulls).
+   * Note: JPEG_ENABLED is ignored — only JPEG_PIPELINE_ENABLED is read.
+   */
   jpegPipelineEnabled: process.env.JPEG_PIPELINE_ENABLED !== 'false',
   reconnectDelayMs: Number(process.env.RECONNECT_DELAY_MS || 5000),
   tokenRefreshMarginMs: Number(process.env.TOKEN_REFRESH_MARGIN_MS || 300000),
@@ -32,3 +36,15 @@ module.exports = {
   repoPath: process.env.AGENT_REPO_PATH || require('path').join(__dirname, '..'),
   pm2AppName: process.env.PM2_APP_NAME || 'railwatch-agent',
 };
+
+/** Warn if a similarly named env var is set but has no effect. */
+function warnJpegEnvMisconfiguration() {
+  if (process.env.JPEG_ENABLED !== undefined && process.env.JPEG_PIPELINE_ENABLED === undefined) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[agent][config] JPEG_ENABLED is set but ignored. Use JPEG_PIPELINE_ENABLED=false to disable the JPEG pipeline.'
+    );
+  }
+}
+
+warnJpegEnvMisconfiguration();

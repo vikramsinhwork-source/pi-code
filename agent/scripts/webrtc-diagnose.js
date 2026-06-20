@@ -3,9 +3,11 @@
  * Pi-side go2rtc WebRTC diagnostic utility.
  *
  * Usage:
- *   node scripts/webrtc-diagnose.js                    # list streams only
- *   node scripts/webrtc-diagnose.js camera2            # POST sample offer to go2rtc
- *   node scripts/webrtc-diagnose.js camera2 --offer ./offer.json
+ *   node scripts/webrtc-diagnose.js                         # list streams only
+ *   node scripts/webrtc-diagnose.js camera1                 # POST sample offer
+ *   node scripts/webrtc-diagnose.js camera1 --concurrent 3  # parallel race test
+ *   node scripts/webrtc-diagnose.js camera1 --offer ./offer.json
+ *   node scripts/webrtc-diagnose.js --stacks                # hung goroutine check
  *
  * offer.json: { "type": "offer", "sdp": "v=0\\r\\n..." }
  */
@@ -14,9 +16,37 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }
 const { analyzeSdp, findSuspicious, compareOfferAnswer } = require('../src/sdpDiagnostics');
 
 const GO2RTC_URL = (process.env.GO2RTC_URL || 'http://127.0.0.1:1984').replace(/\/$/, '');
-const streamArg = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : null;
-const offerFlagIdx = process.argv.indexOf('--offer');
-const offerPath = offerFlagIdx >= 0 ? process.argv[offerFlagIdx + 1] : null;
+
+function parseArgs(argv) {
+  const positional = [];
+  let offerPath = null;
+  let concurrent = 1;
+  let stacksOnly = false;
+
+  for (let i = 2; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--offer') {
+      offerPath = argv[i + 1];
+      i += 1;
+    } else if (arg === '--concurrent') {
+      concurrent = Math.max(1, Number(argv[i + 1]) || 1);
+      i += 1;
+    } else if (arg === '--stacks') {
+      stacksOnly = true;
+    } else if (!arg.startsWith('--')) {
+      positional.push(arg);
+    }
+  }
+
+  return {
+    streamName: positional[0] || null,
+    offerPath,
+    concurrent,
+    stacksOnly,
+  };
+}
+
+const args = parseArgs(process.argv);
 
 /** Minimal recvonly video offer (Chrome-like codecs). go2rtc uses this for SDP negotiation probe. */
 const SAMPLE_OFFER_SDP = [
@@ -70,26 +100,101 @@ const SAMPLE_OFFER_SDP = [
   'a=fmtp:36 apt=35',
 ].join('\r\n') + '\r\n';
 
-async function fetchStreams() {
-  const url = `${GO2RTC_URL}/api/streams`;
-  console.log(`\n=== GET ${url} ===`);
-  const res = await fetch(url);
+function summarizeStreamEntry(name, info = {}) {
+  const producers = Array.isArray(info.producers) ? info.producers : [];
+  const consumers = Array.isArray(info.consumers) ? info.consumers : [];
+  return {
+    name,
+    producerCount: producers.length || info.producerCount || 0,
+    consumerCount: consumers.length || info.consumerCount || 0,
+    online: producers.length > 0 || info.online === true,
+  };
+}
+
+function summarizeStreamsPayload(data) {
+  if (!data || typeof data !== 'object') return [];
+  return Object.entries(data).map(([name, info]) => summarizeStreamEntry(name, info));
+}
+
+function printStreamSnapshot(label, data, focusStream = null) {
+  const rows = summarizeStreamsPayload(data);
+  console.log(`\n=== ${label} (${rows.length} streams) ===`);
+  if (!rows.length) {
+    console.log('(no streams)');
+    return;
+  }
+
+  const filtered = focusStream ? rows.filter((r) => r.name === focusStream) : rows;
+  for (const row of filtered) {
+    console.log(
+      `  ${row.name}: producers=${row.producerCount} consumers=${row.consumerCount} online=${row.online}`
+    );
+  }
+
+  if (focusStream) {
+    const target = filtered[0];
+    if (target) {
+      console.log(
+        focusStream,
+        target.producerCount > 0 ? 'producer WARM (preload or prior viewer)' : 'producer COLD (on-demand start)'
+      );
+    }
+  }
+}
+
+async function fetchJson(path, label) {
+  const url = `${GO2RTC_URL}${path}`;
+  console.log(`\n=== GET ${url} (${label}) ===`);
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    const msg = err?.cause?.code === 'ECONNREFUSED'
+      ? `Cannot connect to go2rtc at ${GO2RTC_URL} — is go2rtc running on this host?`
+      : err.message;
+    console.error(`ERROR: ${msg}`);
+    process.exitCode = 1;
+    return { ok: false, json: null, text: '' };
+  }
   const text = await res.text();
   console.log(`status=${res.status} content-type=${res.headers.get('content-type')}`);
   try {
     const json = JSON.parse(text);
-    console.log(JSON.stringify(json, null, 2));
-    return json;
+    return { ok: res.ok, json, text };
   } catch {
     console.log(text.slice(0, 500));
-    return null;
+    return { ok: res.ok, json: null, text };
   }
 }
 
+async function fetchStreams(verbose = true) {
+  const { ok, json, text } = await fetchJson('/api/streams', 'streams');
+  if (verbose && json) {
+    console.log(JSON.stringify(json, null, 2));
+  } else if (verbose && !json) {
+    console.log(text.slice(0, 500));
+  }
+  return ok ? json : null;
+}
+
+async function fetchStacks() {
+  const { ok, json, text } = await fetchJson('/api/stacks', 'stacks');
+  if (json) {
+    const stackLines = typeof json === 'string' ? json : JSON.stringify(json, null, 2);
+    console.log(stackLines.slice(0, 4000));
+    if (stackLines.length > 4000) {
+      console.log(`... truncated (${stackLines.length} chars total)`);
+    }
+  } else {
+    console.log(text.slice(0, 2000));
+  }
+  return ok ? json : null;
+}
+
 async function loadOffer() {
-  if (offerPath) {
+  if (args.offerPath) {
     const fs = require('fs');
-    const raw = JSON.parse(fs.readFileSync(offerPath, 'utf8'));
+    const raw = JSON.parse(fs.readFileSync(args.offerPath, 'utf8'));
     return { type: raw.type || 'offer', sdp: raw.sdp };
   }
   return { type: 'offer', sdp: SAMPLE_OFFER_SDP };
@@ -103,16 +208,20 @@ async function normalizeResponse(response) {
       const json = JSON.parse(text);
       if (typeof json.sdp === 'string') return { type: json.type || 'answer', sdp: json.sdp, raw: json };
       if (typeof json === 'string') return { type: 'answer', sdp: json, raw: json };
-    } catch (_) {}
+    } catch (_) {
+      // fall through
+    }
   }
   if (text.trim().startsWith('v=')) return { type: 'answer', sdp: text.trim(), raw: text };
   throw new Error(`Unexpected response (${contentType}): ${text.slice(0, 300)}`);
 }
 
-async function postWebrtcOffer(streamName, offer) {
+async function postWebrtcOffer(streamName, offer, { index = 0, quiet = false } = {}) {
   const url = `${GO2RTC_URL}/api/webrtc?src=${encodeURIComponent(streamName)}`;
-  console.log(`\n=== POST ${url} ===`);
-  console.log(`offer bytes=${offer.sdp.length}`);
+  if (!quiet) {
+    console.log(`\n=== POST ${url} [${index}] ===`);
+    console.log(`offer bytes=${offer.sdp.length}`);
+  }
 
   const started = Date.now();
   const response = await fetch(url, {
@@ -122,56 +231,137 @@ async function postWebrtcOffer(streamName, offer) {
   });
   const elapsedMs = Date.now() - started;
 
-  console.log(`status=${response.status} elapsed=${elapsedMs}ms content-type=${response.headers.get('content-type')}`);
-
   if (!response.ok) {
     const errText = await response.text();
-    console.error(`ERROR: ${errText.slice(0, 500)}`);
-    process.exitCode = 1;
-    return null;
+    return {
+      index,
+      ok: false,
+      status: response.status,
+      elapsedMs,
+      error: errText.slice(0, 300),
+    };
   }
 
   const answer = await normalizeResponse(response);
-  console.log(`answer type=${answer.type} sdp bytes=${answer.sdp.length}`);
-  console.log(`answer preview: ${JSON.stringify(answer.sdp.slice(0, 200))}`);
+  return {
+    index,
+    ok: true,
+    status: response.status,
+    elapsedMs,
+    answerBytes: answer.sdp.length,
+    answer,
+  };
+}
 
-  const offerAnalysis = analyzeSdp(offer.sdp);
-  const answerAnalysis = analyzeSdp(answer.sdp);
-  console.log('\n--- Offer codecs ---');
-  console.log(JSON.stringify(offerAnalysis.videoCodecs, null, 2));
-  console.log('\n--- Answer codecs ---');
-  console.log(JSON.stringify(answerAnalysis.videoCodecs, null, 2));
-  console.log('\n--- Answer directions ---');
-  console.log(JSON.stringify(answerAnalysis.directions, null, 2));
+function printOfferResult(result) {
+  if (!result.ok) {
+    console.log(`  [${result.index}] FAIL status=${result.status} elapsed=${result.elapsedMs}ms error=${result.error}`);
+    return;
+  }
+  console.log(`  [${result.index}] OK status=${result.status} elapsed=${result.elapsedMs}ms answer_bytes=${result.answerBytes}`);
+}
 
-  const suspicious = findSuspicious(answerAnalysis);
-  if (suspicious.length) {
-    console.warn('\n⚠ Suspicious:', suspicious.join('\n  '));
+async function runSingleOffer(streamName, offer) {
+  const before = await fetchStreams(false);
+  printStreamSnapshot('Before offer', before, streamName);
+
+  const result = await postWebrtcOffer(streamName, offer, { index: 0 });
+  printOfferResult(result);
+
+  if (result.ok && result.answer) {
+    const offerAnalysis = analyzeSdp(offer.sdp);
+    const answerAnalysis = analyzeSdp(result.answer.sdp);
+    console.log('\n--- Offer codecs ---');
+    console.log(JSON.stringify(offerAnalysis.videoCodecs, null, 2));
+    console.log('\n--- Answer codecs ---');
+    console.log(JSON.stringify(answerAnalysis.videoCodecs, null, 2));
+    console.log('\n--- Answer directions ---');
+    console.log(JSON.stringify(answerAnalysis.directions, null, 2));
+
+    const suspicious = findSuspicious(answerAnalysis);
+    if (suspicious.length) {
+      console.warn('\n⚠ Suspicious:', suspicious.join('\n  '));
+    } else {
+      console.log('\n✓ No obvious SDP issues detected');
+    }
+
+    const cmp = compareOfferAnswer(offer.sdp, result.answer.sdp);
+    if (cmp.notes.length) {
+      console.log('\n--- Offer/Answer notes ---');
+      cmp.notes.forEach((n) => console.log(`  • ${n}`));
+    }
   } else {
-    console.log('\n✓ No obvious SDP issues detected');
+    process.exitCode = 1;
   }
 
-  const cmp = compareOfferAnswer(offer.sdp, answer.sdp);
-  if (cmp.notes.length) {
-    console.log('\n--- Offer/Answer notes ---');
-    cmp.notes.forEach((n) => console.log(`  • ${n}`));
+  const after = await fetchStreams(false);
+  printStreamSnapshot('After offer', after, streamName);
+}
+
+async function runConcurrentOffers(streamName, offer, count) {
+  console.log(`\n=== Concurrent race test: ${count} parallel offers → ${streamName} ===`);
+
+  const before = await fetchStreams(false);
+  printStreamSnapshot('Before concurrent offers', before, streamName);
+
+  const started = Date.now();
+  const results = await Promise.all(
+    Array.from({ length: count }, (_, i) => postWebrtcOffer(streamName, offer, { index: i, quiet: true }))
+  );
+  const totalMs = Date.now() - started;
+
+  console.log(`\n--- Results (wall ${totalMs}ms) ---`);
+  results.sort((a, b) => a.index - b.index).forEach(printOfferResult);
+
+  const okCount = results.filter((r) => r.ok).length;
+  const failCount = results.length - okCount;
+  const elapsed = results.map((r) => r.elapsedMs);
+  console.log(`\nSummary: ${okCount}/${results.length} succeeded, ${failCount} failed`);
+  if (elapsed.length) {
+    console.log(`Per-offer elapsed: min=${Math.min(...elapsed)}ms max=${Math.max(...elapsed)}ms avg=${Math.round(elapsed.reduce((a, b) => a + b, 0) / elapsed.length)}ms`);
   }
 
-  return answer;
+  if (failCount > 0) {
+    process.exitCode = 1;
+    console.warn('\n⚠ Some concurrent offers failed — check preload and go2rtc version (>= 1.9.11)');
+  }
+
+  const after = await fetchStreams(false);
+  printStreamSnapshot('After concurrent offers', after, streamName);
+
+  if (after?.[streamName]?.consumers?.length > count) {
+    console.warn(`⚠ consumer count (${after[streamName].consumers.length}) > offers sent (${count}) — possible hung consumers`);
+    console.log('Tip: curl http://127.0.0.1:1984/api/stacks or restart go2rtc');
+  }
 }
 
 async function main() {
   console.log(`go2rtc base: ${GO2RTC_URL}`);
-  await fetchStreams();
 
-  if (!streamArg) {
-    console.log('\nTip: node scripts/webrtc-diagnose.js camera2');
-    console.log('     node scripts/webrtc-diagnose.js camera2 --offer ./offer-from-browser.json');
+  if (args.stacksOnly) {
+    await fetchStacks();
+    return;
+  }
+
+  await fetchStreams(!args.streamName);
+
+  if (!args.streamName) {
+    if (process.exitCode) return;
+    console.log('\nTips:');
+    console.log('  node scripts/webrtc-diagnose.js camera1');
+    console.log('  node scripts/webrtc-diagnose.js camera1 --concurrent 3');
+    console.log('  node scripts/webrtc-diagnose.js camera1 --offer ./offer-from-browser.json');
+    console.log('  node scripts/webrtc-diagnose.js --stacks');
     return;
   }
 
   const offer = await loadOffer();
-  await postWebrtcOffer(streamArg, offer);
+
+  if (args.concurrent > 1) {
+    await runConcurrentOffers(args.streamName, offer, args.concurrent);
+  } else {
+    await runSingleOffer(args.streamName, offer);
+  }
 }
 
 main().catch((err) => {

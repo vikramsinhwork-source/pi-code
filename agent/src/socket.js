@@ -105,6 +105,7 @@ function startIntervals() {
     runKioskLoop();
   } else {
     console.log('[agent][socket] JPEG pipeline disabled (JPEG_PIPELINE_ENABLED=false)');
+    console.log('[agent][socket] WebRTC-only mode: no agent ffmpeg RTSP pulls for cameras');
     cameraStreamer.stop();
   }
 }
