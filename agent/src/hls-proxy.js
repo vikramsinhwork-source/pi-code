@@ -2,14 +2,15 @@ const config = require('./config');
 
 const MAX_HLS_BYTES = Number(process.env.HLS_PROXY_MAX_BODY_BYTES || 8388608);
 
-async function fetchLocalHls(path) {
+async function fetchLocalHls(path, query) {
   const rel = String(path || '')
     .replace(/^\/+/, '')
     .split('/')
     .filter(Boolean)
     .map((part) => encodeURIComponent(part))
     .join('/');
-  const url = `${config.mediamtxHlsBaseUrl}/${rel}`;
+  const q = String(query || '').trim().replace(/^\?+/, '');
+  const url = q ? `${config.mediamtxHlsBaseUrl}/${rel}?${q}` : `${config.mediamtxHlsBaseUrl}/${rel}`;
   const response = await fetch(url, { method: 'GET' });
 
   if (!response.ok) {
@@ -36,6 +37,7 @@ async function fetchLocalHls(path) {
 function attach(socket) {
   socket.on('device:hls-fetch', async (payload, ack) => {
     const path = payload?.path;
+    const query = payload?.query;
     if (!path || typeof path !== 'string') {
       if (typeof ack === 'function') {
         ack({ error: 'path is required' });
@@ -44,7 +46,7 @@ function attach(socket) {
     }
 
     try {
-      const result = await fetchLocalHls(path);
+      const result = await fetchLocalHls(path, query);
       if (typeof ack === 'function') {
         ack(result);
       }
