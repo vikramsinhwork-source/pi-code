@@ -57,7 +57,7 @@ paths:
       -f rtsp rtsp://127.0.0.1:$RTSP_PORT/$MTX_PATH
     runOnDemandRestart: yes
     runOnDemandStartTimeout: 45s
-    runOnDemandCloseAfter: 15s
+    runOnDemandCloseAfter: 60s
   camera2:
     runOnDemand: >
       ffmpeg -hide_banner -loglevel error -rtsp_transport tcp
@@ -67,7 +67,7 @@ paths:
       -f rtsp rtsp://127.0.0.1:$RTSP_PORT/$MTX_PATH
     runOnDemandRestart: yes
     runOnDemandStartTimeout: 45s
-    runOnDemandCloseAfter: 15s
+    runOnDemandCloseAfter: 60s
   camera3:
     runOnDemand: >
       ffmpeg -hide_banner -loglevel error -rtsp_transport tcp
@@ -77,7 +77,7 @@ paths:
       -f rtsp rtsp://127.0.0.1:$RTSP_PORT/$MTX_PATH
     runOnDemandRestart: yes
     runOnDemandStartTimeout: 45s
-    runOnDemandCloseAfter: 15s
+    runOnDemandCloseAfter: 60s
   camera4:
     runOnDemand: >
       ffmpeg -hide_banner -loglevel error -rtsp_transport tcp
@@ -87,7 +87,7 @@ paths:
       -f rtsp rtsp://127.0.0.1:$RTSP_PORT/$MTX_PATH
     runOnDemandRestart: yes
     runOnDemandStartTimeout: 45s
-    runOnDemandCloseAfter: 15s
+    runOnDemandCloseAfter: 60s
   camera5:
     runOnDemand: >
       ffmpeg -hide_banner -loglevel error -rtsp_transport tcp
@@ -97,7 +97,7 @@ paths:
       -f rtsp rtsp://127.0.0.1:$RTSP_PORT/$MTX_PATH
     runOnDemandRestart: yes
     runOnDemandStartTimeout: 45s
-    runOnDemandCloseAfter: 15s
+    runOnDemandCloseAfter: 60s
   kiosk1:
     sourceOnDemand: no
   kiosk2:
